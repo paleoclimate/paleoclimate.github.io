@@ -1,0 +1,135 @@
+flowchart LR
+    %% External Actors
+    Researchers([👤 Researchers])
+    User([👤 User])
+
+    %% External artifact
+    Evidence[/Paleoclimate Evidence Table/]
+
+    %% Frontend Package
+    subgraph Frontend["Frontend"]
+        FE[Web Application]
+    end
+
+    %% Backend Package
+    subgraph Backend["Backend"]
+        
+        subgraph DataLayer["Data Layer"]
+            PaleoDB[(Paleoclimate Database)]
+            GeoPlotter[GeoPlotter Service]
+            PyGplates["≪library≫<br>PyGplates"]
+            GeoPlotter -.->|≪use≫| PyGplates
+        end
+
+        subgraph PCVS["PCVS Application"]
+            API[REST API]
+            BECache[(Cache)]
+            API <--> BECache
+
+            subgraph Prediction["Prediction Pipeline"]
+                KNN[KNN]
+                IDW[IDW]
+            end
+        end
+    end
+
+    %% UML Relationships
+    
+    %% Actor relationships (uses)
+    Researchers -.->|≪uses≫| Evidence
+    User -.->|≪uses≫| FE
+
+    %% Data flow (dependencies)
+    Evidence -.->|≪imports≫| GeoPlotter
+    GeoPlotter -.->|≪provides≫| Prediction
+
+    %% Prediction stores results
+    Prediction -->|≪persists≫| PaleoDB
+
+    %% API reads from database
+    API -->|≪queries≫| PaleoDB
+
+    %% Frontend-Backend communication
+    FE <-->|≪HTTP/JSON≫| API
+
+    %% Minimal color palette
+    classDef actor fill:#FAFAFA,stroke:#616161,stroke-width:2px,color:#424242;
+    classDef package fill:#FAFAFA,stroke:#9E9E9E,stroke-width:2px,color:#424242;
+    classDef component fill:#FFFFFF,stroke:#BDBDBD,stroke-width:1.5px,color:#424242;
+    classDef artifact fill:#F5F5F5,stroke:#757575,stroke-width:1.5px,color:#424242;
+    classDef library fill:#F5F5F5,stroke:#757575,stroke-width:1.5px,color:#424242;
+
+    %% Apply styles
+    class Researchers,User actor
+    class Frontend,Backend,DataLayer,PCVS,Prediction package
+    class FE,GeoPlotter,API,KNN,IDW component
+    class PaleoDB,BECache component
+    class Evidence artifact
+    class PyGplates libraryflowchart LR
+    %% External Actors
+    Researchers([👤 Researchers])
+    User([👤 User])
+
+    %% External artifact
+    Evidence[/Paleoclimate Evidence Table/]
+
+    %% Frontend Package
+    subgraph Frontend["Frontend"]
+        FE[Web Application]
+    end
+
+    %% Backend Package
+    subgraph Backend["Backend"]
+        
+        subgraph DataLayer["Data Layer"]
+            PaleoDB[(Paleoclimate Database)]
+            GeoPlotter[GeoPlotter Service]
+            PyGplates["≪library≫<br>PyGplates"]
+            GeoPlotter -.->|≪use≫| PyGplates
+        end
+
+        subgraph PCVS["PCVS Application"]
+            API[REST API]
+            BECache[(Cache)]
+            API <--> BECache
+
+            subgraph Prediction["Prediction Pipeline"]
+                KNN[KNN]
+                IDW[IDW]
+            end
+        end
+    end
+
+    %% UML Relationships
+    
+    %% Actor relationships (uses)
+    Researchers -.->|≪uses≫| Evidence
+    User -.->|≪uses≫| FE
+
+    %% Data flow (dependencies)
+    Evidence -.->|≪imports≫| GeoPlotter
+    GeoPlotter -.->|≪provides≫| Prediction
+
+    %% Prediction stores results
+    Prediction -->|≪persists≫| PaleoDB
+
+    %% API reads from database
+    API -->|≪queries≫| PaleoDB
+
+    %% Frontend-Backend communication
+    FE <-->|≪HTTP/JSON≫| API
+
+    %% Minimal color palette
+    classDef actor fill:#FAFAFA,stroke:#616161,stroke-width:2px,color:#424242;
+    classDef package fill:#FAFAFA,stroke:#9E9E9E,stroke-width:2px,color:#424242;
+    classDef component fill:#FFFFFF,stroke:#BDBDBD,stroke-width:1.5px,color:#424242;
+    classDef artifact fill:#F5F5F5,stroke:#757575,stroke-width:1.5px,color:#424242;
+    classDef library fill:#F5F5F5,stroke:#757575,stroke-width:1.5px,color:#424242;
+
+    %% Apply styles
+    class Researchers,User actor
+    class Frontend,Backend,DataLayer,PCVS,Prediction package
+    class FE,GeoPlotter,API,KNN,IDW component
+    class PaleoDB,BECache component
+    class Evidence artifact
+    class PyGplates library
