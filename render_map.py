@@ -541,6 +541,137 @@ def build_color_stats_html(stats, title_label):
     """
 
 
+def _add_graticule(map_obj, interval=30):
+    """Add a lat/lon graticule with labels that reposition at viewport edges on pan/zoom.
+
+    The graticule is always visible and not toggleable via LayerControl.
+    Grid lines use a custom pane (z-index 250) so they render behind data overlays.
+    """
+    graticule_css = MacroElement()
+    graticule_css._template = Template("""
+        {% macro header(this, kwargs) %}
+        <style>
+            .graticule-label {
+                background: none !important;
+                border: none !important;
+                box-shadow: none !important;
+            }
+            .graticule-label span {
+                font-family: Arial, sans-serif;
+                font-size: 9px;
+                color: #333;
+                font-weight: bold;
+                text-shadow:
+                    1px 0 0 rgba(255,255,255,0.8), -1px 0 0 rgba(255,255,255,0.8),
+                    0 1px 0 rgba(255,255,255,0.8), 0 -1px 0 rgba(255,255,255,0.8);
+                white-space: nowrap;
+            }
+        </style>
+        {% endmacro %}
+    """)
+    map_obj.get_root().add_child(graticule_css)
+
+    graticule_js = f"""
+        {{% macro script(this, kwargs) %}}
+        (function() {{
+            var map = {{{{ this._parent.get_name() }}}};
+            var interval = {interval};
+
+            var pane = map.createPane('graticule');
+            pane.style.zIndex = 250;
+            pane.style.pointerEvents = 'none';
+
+            var labelPane = map.createPane('graticuleLabels');
+            labelPane.style.zIndex = 255;
+            labelPane.style.pointerEvents = 'none';
+
+            var lineStyle = {{
+                color: '#555',
+                weight: 0.7,
+                opacity: 0.5,
+                dashArray: '4 4',
+                interactive: false,
+                pane: 'graticule'
+            }};
+            var majorLineStyle = {{
+                color: '#555',
+                weight: 1.0,
+                opacity: 0.6,
+                dashArray: '6 3',
+                interactive: false,
+                pane: 'graticule'
+            }};
+
+            for (var lat = -90; lat <= 90; lat += interval) {{
+                var style = (lat === 0) ? majorLineStyle : lineStyle;
+                L.polyline([[lat, -180], [lat, 180]], style).addTo(map);
+            }}
+            for (var lon = -180; lon < 180; lon += interval) {{
+                var style = (lon === 0) ? majorLineStyle : lineStyle;
+                L.polyline([[-90, lon], [90, lon]], style).addTo(map);
+            }}
+
+            var labelsGroup = L.layerGroup().addTo(map);
+
+            function fmtLat(lat) {{
+                if (lat === 0) return '0°';
+                return Math.abs(lat) + '°' + (lat > 0 ? 'N' : 'S');
+            }}
+            function fmtLon(lon) {{
+                if (lon === 0) return '0°';
+                if (Math.abs(lon) === 180) return '180°';
+                return Math.abs(lon) + '°' + (lon > 0 ? 'E' : 'W');
+            }}
+
+            function updateLabels() {{
+                labelsGroup.clearLayers();
+                var b = map.getBounds();
+                var west = b.getWest(), east = b.getEast();
+                var south = b.getSouth(), north = b.getNorth();
+                var mx = (east - west) * 0.01;
+                var my = (north - south) * 0.03;
+
+                for (var lat = -90; lat <= 90; lat += interval) {{
+                    if (lat > south && lat < north) {{
+                        L.marker([lat, west + mx], {{
+                            icon: L.divIcon({{
+                                className: 'graticule-label',
+                                html: '<span>' + fmtLat(lat) + '</span>',
+                                iconSize: [35, 14],
+                                iconAnchor: [0, 7]
+                            }}),
+                            interactive: false,
+                            pane: 'graticuleLabels'
+                        }}).addTo(labelsGroup);
+                    }}
+                }}
+
+                for (var lon = -180; lon < 180; lon += interval) {{
+                    if (lon > west && lon < east) {{
+                        L.marker([south + my, lon], {{
+                            icon: L.divIcon({{
+                                className: 'graticule-label',
+                                html: '<span>' + fmtLon(lon) + '</span>',
+                                iconSize: [35, 14],
+                                iconAnchor: [15, -2]
+                            }}),
+                            interactive: false,
+                            pane: 'graticuleLabels'
+                        }}).addTo(labelsGroup);
+                    }}
+                }}
+            }}
+
+            map.on('moveend', updateLabels);
+            map.whenReady(function() {{ setTimeout(updateLabels, 300); }});
+        }})();
+        {{% endmacro %}}
+    """
+    macro = MacroElement()
+    macro._template = Template(graticule_js)
+    map_obj.add_child(macro)
+
+
 def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.html', 
                map_title='Paleogeographic Map - 110 Ma', raster_img_path='raster_overlay.png',
                point_values_override=None, raster_layer_name='Raster (IDW Interpolation)',
@@ -778,6 +909,9 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     
     # Add measure tool
     plugins.MeasureControl().add_to(m)
+
+    # Add coordinate graticule (always visible, 30° intervals)
+    _add_graticule(m, interval=30)
     
     # Fit bounds to raster extent (tightest framing around interpolated area)
     raster_bounds = None
