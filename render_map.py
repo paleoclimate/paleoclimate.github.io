@@ -816,6 +816,220 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     
     points_group.add_to(m)
 
+    # Basin filter control (topleft, next to zoom)
+    basins = sorted(set(
+        feature.get('properties', {}).get('Basin_Sub_') or 'N/A'
+        for feature in points_data.get('features', [])
+        if feature.get('geometry', {}).get('type') == 'Point'
+           and feature.get('geometry', {}).get('coordinates')
+    ))
+    marker_basins = [
+        feature.get('properties', {}).get('Basin_Sub_') or 'N/A'
+        for feature in points_data.get('features', [])
+        if feature.get('geometry', {}).get('type') == 'Point'
+           and feature.get('geometry', {}).get('coordinates')
+    ]
+
+    if basins:
+        pg_name = points_group.get_name()
+        basins_json = json.dumps(basins, ensure_ascii=False)
+        marker_basins_json = json.dumps(marker_basins, ensure_ascii=False)
+
+        basin_css = MacroElement()
+        basin_css._template = Template("""
+            {% macro header(this, kwargs) %}
+            <style>
+                .basin-filter-control {
+                    background: white;
+                    border-radius: 4px;
+                    box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+                    font-family: Arial, sans-serif;
+                    font-size: 11px;
+                    max-height: 60vh;
+                    display: flex;
+                    flex-direction: column;
+                }
+                .basin-filter-header {
+                    padding: 4px 8px;
+                    background: #2c3e50;
+                    color: white;
+                    font-weight: bold;
+                    font-size: 11px;
+                    cursor: pointer;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    user-select: none;
+                    border-radius: 4px;
+                    gap: 6px;
+                }
+                .basin-filter-control.open .basin-filter-header {
+                    border-radius: 4px 4px 0 0;
+                }
+                .basin-filter-header .arrow {
+                    font-size: 8px;
+                    transition: transform 0.2s;
+                }
+                .basin-filter-control.open .basin-filter-header .arrow {
+                    transform: rotate(180deg);
+                }
+                .basin-filter-body {
+                    display: none;
+                    padding: 4px 6px;
+                    overflow-y: auto;
+                    max-height: calc(60vh - 28px);
+                }
+                .basin-filter-control.open .basin-filter-body {
+                    display: block;
+                }
+                .basin-filter-actions {
+                    display: flex;
+                    gap: 4px;
+                    margin-bottom: 4px;
+                    padding-bottom: 4px;
+                    border-bottom: 1px solid #ddd;
+                }
+                .basin-filter-actions button {
+                    flex: 1;
+                    padding: 2px 4px;
+                    font-size: 9px;
+                    border: 1px solid #bdc3c7;
+                    border-radius: 2px;
+                    background: #ecf0f1;
+                    cursor: pointer;
+                    font-family: Arial, sans-serif;
+                }
+                .basin-filter-actions button:hover {
+                    background: #bdc3c7;
+                }
+                .basin-filter-list {
+                    list-style: none;
+                    padding: 0;
+                    margin: 0;
+                }
+                .basin-filter-list li {
+                    padding: 1px 2px;
+                    display: flex;
+                    align-items: center;
+                }
+                .basin-filter-list li:hover {
+                    background: #ecf0f1;
+                    border-radius: 2px;
+                }
+                .basin-filter-list label {
+                    cursor: pointer;
+                    white-space: nowrap;
+                    font-size: 10px;
+                    display: flex;
+                    align-items: center;
+                    gap: 3px;
+                }
+                .basin-filter-list input[type="checkbox"] {
+                    margin: 0;
+                }
+            </style>
+            {% endmacro %}
+        """)
+        m.get_root().add_child(basin_css)
+
+        basin_js = f"""
+            {{% macro script(this, kwargs) %}}
+            (function() {{
+                var map = {{{{ this._parent.get_name() }}}};
+                var pointsGroup = {pg_name};
+                var allBasins = {basins_json};
+                var markerBasins = {marker_basins_json};
+
+                var allMarkers = [];
+                pointsGroup.eachLayer(function(layer) {{
+                    allMarkers.push(layer);
+                }});
+
+                var selectedBasins = new Set(allBasins);
+
+                var filterControl = L.control({{position: 'topleft'}});
+                filterControl.onAdd = function() {{
+                    var container = L.DomUtil.create('div', 'basin-filter-control');
+                    L.DomEvent.disableClickPropagation(container);
+                    L.DomEvent.disableScrollPropagation(container);
+
+                    var header = L.DomUtil.create('div', 'basin-filter-header', container);
+                    header.innerHTML = 'Basins <span class="arrow">&#9660;</span>';
+
+                    var body = L.DomUtil.create('div', 'basin-filter-body', container);
+
+                    var actions = L.DomUtil.create('div', 'basin-filter-actions', body);
+                    var selectAllBtn = L.DomUtil.create('button', '', actions);
+                    selectAllBtn.textContent = 'Select All';
+                    var deselectAllBtn = L.DomUtil.create('button', '', actions);
+                    deselectAllBtn.textContent = 'Deselect All';
+
+                    var list = L.DomUtil.create('ul', 'basin-filter-list', body);
+                    var checkboxes = [];
+                    allBasins.forEach(function(basin) {{
+                        var li = L.DomUtil.create('li', '', list);
+                        var label = L.DomUtil.create('label', '', li);
+                        var cb = document.createElement('input');
+                        cb.type = 'checkbox';
+                        cb.checked = true;
+                        cb.value = basin;
+                        label.appendChild(cb);
+                        label.appendChild(document.createTextNode(' ' + basin));
+                        checkboxes.push(cb);
+                        cb.addEventListener('change', function() {{
+                            if (this.checked) {{
+                                selectedBasins.add(this.value);
+                            }} else {{
+                                selectedBasins.delete(this.value);
+                            }}
+                            applyFilter();
+                        }});
+                    }});
+
+                    header.addEventListener('click', function() {{
+                        container.classList.toggle('open');
+                    }});
+
+                    selectAllBtn.addEventListener('click', function() {{
+                        checkboxes.forEach(function(cb) {{
+                            cb.checked = true;
+                            selectedBasins.add(cb.value);
+                        }});
+                        applyFilter();
+                    }});
+
+                    deselectAllBtn.addEventListener('click', function() {{
+                        checkboxes.forEach(function(cb) {{
+                            cb.checked = false;
+                        }});
+                        selectedBasins.clear();
+                        applyFilter();
+                    }});
+
+                    return container;
+                }};
+                filterControl.addTo(map);
+
+                function applyFilter() {{
+                    for (var i = 0; i < allMarkers.length; i++) {{
+                        if (selectedBasins.has(markerBasins[i])) {{
+                            if (!pointsGroup.hasLayer(allMarkers[i])) {{
+                                pointsGroup.addLayer(allMarkers[i]);
+                            }}
+                        }} else {{
+                            if (pointsGroup.hasLayer(allMarkers[i])) {{
+                                pointsGroup.removeLayer(allMarkers[i]);
+                            }}
+                        }}
+                    }}
+                }}
+            }})();
+            {{% endmacro %}}
+        """
+        basin_macro = MacroElement()
+        basin_macro._template = Template(basin_js)
+        m.add_child(basin_macro)
+
     # Add color stats as a fixed Leaflet control (bottom-left) toggled via LayerControl checkbox
     if color_stats_img_path and os.path.exists(color_stats_img_path):
         stats = classificar_por_intervalos(color_stats_img_path)
