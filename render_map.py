@@ -829,7 +829,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                     f'</div>'
                 )
             popup_html = (
-                f'<div style="font-family: Arial; font-size: 12px;">'
+                f'<div style="font-family: Arial; font-size: 12px; max-height: 300px; overflow-y: auto;">'
                 f'<div style="margin-bottom:4px;font-weight:bold;color:#2c3e50;">'
                 f'{len(features)} points at this location</div>'
                 + ''.join(parts)
