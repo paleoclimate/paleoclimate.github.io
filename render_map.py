@@ -79,7 +79,7 @@ def extract_points_and_values(points_data):
             coords = geom.get('coordinates', [])
             if coords:
                 points.append([coords[0], coords[1]])  # [lon, lat]
-                climate = props.get('Climate_cl', 'S')
+                climate = props.get('Climate_Cl', 'S')
                 values.append(climate_to_numeric(climate))
     return np.array(points), np.array(values)
 
@@ -340,7 +340,7 @@ def create_raster_overlay(geotiff_path, map_obj, raster_img_path='raster_overlay
                             if point_values_override is not None and override_index < override_count:
                                 point_value = float(point_values_override[override_index])
                             else:
-                                climate = props.get('Climate_cl', 'S')
+                                climate = props.get('Climate_Cl', 'S')
                                 point_value = climate_to_numeric(climate)
                             override_index += 1
                             
@@ -759,60 +759,97 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     # Add points layer with styling based on climate (40% smaller, thinner border)
     point_radius_px = 3   # 60% of original 5
     point_weight = 1      # thinner black border
-    def style_points(feature):
-        climate = feature.get('properties', {}).get('Climate_cl', '')
-        color_map = {
-            'H': '#0798db',    # Blue (Humid)
-            'D': '#eaf51d',    # Yellow (Dry)
-            'S': '#0a7a18'     # Dark Green (Semi-arid)
-        }
-        color = color_map.get(climate, 'gray')
-        return {
-            'fillColor': color,
-            'color': 'black',
-            'radius': point_radius_px,
-            'fillOpacity': 0.7,
-            'weight': point_weight
-        }
+    color_map = {
+        'H': '#0798db',    # Blue (Humid)
+        'D': '#eaf51d',    # Yellow (Dry)
+        'S': '#0a7a18'     # Dark Green (Semi-arid)
+    }
+    
+    # Group features by coordinate so overlapping points share a single marker
+    from collections import OrderedDict
+    coord_groups = OrderedDict()
+    for feature in points_data.get('features', []):
+        geom = feature.get('geometry', {})
+        if geom.get('type') == 'Point':
+            coords = geom.get('coordinates', [])
+            if coords:
+                key = (coords[0], coords[1])
+                coord_groups.setdefault(key, []).append(feature)
     
     # Create a FeatureGroup for points
     points_group = folium.FeatureGroup(name='Data Points (110 Ma)')
     
-    for feature in points_data.get('features', []):
-        props = feature.get('properties', {})
-        geom = feature.get('geometry', {})
-        
-        if geom.get('type') == 'Point':
-            coords = geom.get('coordinates', [])
-            if coords:
-                climate = props.get('Climate_cl', '')
-                formation = props.get('Formation', 'N/A')
-                basin = props.get('Basin_Sub_', 'N/A')
-                country = props.get('Country', 'N/A')
-                
-                # Create popup with information
-                popup_html = f"""
-                <div style="font-family: Arial; font-size: 12px;">
-                    <b>Formation:</b> {formation}<br>
-                    <b>Basin:</b> {basin}<br>
-                    <b>Country:</b> {country}<br>
-                    <b>Climate:</b> {climate}<br>
-                    <b>Age:</b> {props.get('TIME', 'N/A')} Ma
-                </div>
-                """
-                
-                point_style = style_points(feature)
-                
-                folium.CircleMarker(
-                    location=[coords[1], coords[0]],
-                    radius=point_radius_px,
-                    popup=folium.Popup(popup_html, max_width=300),
-                    tooltip=f"{formation} ({basin})",
-                    color=point_style['color'],
-                    fillColor=point_style['fillColor'],
-                    fillOpacity=0.7,
-                    weight=point_weight
-                ).add_to(points_group)
+    marker_basins_list = []
+    for (lon, lat), features in coord_groups.items():
+        climates = [f.get('properties', {}).get('Climate_Cl', '') for f in features]
+        basins = list(OrderedDict.fromkeys(
+            f.get('properties', {}).get('Basin_Sub_') or 'N/A' for f in features
+        ))
+        marker_basins_list.append(basins)
+
+        fill_color = color_map.get(climates[0], 'gray')
+
+        if len(features) == 1:
+            props = features[0].get('properties', {})
+            formation = props.get('Formation') or 'N/A'
+            basin = props.get('Basin_Sub_') or 'N/A'
+            country = props.get('Country') or 'N/A'
+            climate_val = props.get('Climate_Cl') or 'N/A'
+            age = props.get('TIME') or 'N/A'
+            popup_html = (
+                '<div style="font-family: Arial; font-size: 12px;">'
+                f'<b>Formation:</b> {formation}<br>'
+                f'<b>Basin:</b> {basin}<br>'
+                f'<b>Country:</b> {country}<br>'
+                f'<b>Climate:</b> {climate_val}<br>'
+                f'<b>Age:</b> {age} Ma'
+                '</div>'
+            )
+            tooltip_text = f'{formation} ({basin})'
+        else:
+            parts = []
+            for idx, feat in enumerate(features, 1):
+                props = feat.get('properties', {})
+                climate = props.get('Climate_Cl') or ''
+                dot_color = color_map.get(climate, 'gray')
+                formation = props.get('Formation') or 'N/A'
+                basin = props.get('Basin_Sub_') or 'N/A'
+                country = props.get('Country') or 'N/A'
+                age = props.get('TIME') or 'N/A'
+                parts.append(
+                    f'<div style="margin-bottom:6px; padding-bottom:6px; border-bottom:1px solid #ddd;">'
+                    f'<b>Point {idx}</b> '
+                    f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;'
+                    f'background:{dot_color};border:1px solid #333;vertical-align:middle;"></span><br>'
+                    f'<b>Formation:</b> {formation}<br>'
+                    f'<b>Basin:</b> {basin}<br>'
+                    f'<b>Country:</b> {country}<br>'
+                    f'<b>Climate:</b> {climate}<br>'
+                    f'<b>Age:</b> {age} Ma'
+                    f'</div>'
+                )
+            popup_html = (
+                f'<div style="font-family: Arial; font-size: 12px;">'
+                f'<div style="margin-bottom:4px;font-weight:bold;color:#2c3e50;">'
+                f'{len(features)} points at this location</div>'
+                + ''.join(parts)
+                + '</div>'
+            )
+            names = list(OrderedDict.fromkeys(
+                f.get('properties', {}).get('Formation') or 'N/A' for f in features
+            ))
+            tooltip_text = f'{len(features)} points: {", ".join(names)}'
+
+        folium.CircleMarker(
+            location=[lat, lon],
+            radius=point_radius_px,
+            popup=folium.Popup(popup_html, max_width=350),
+            tooltip=tooltip_text,
+            color='black',
+            fillColor=fill_color,
+            fillOpacity=0.7,
+            weight=point_weight
+        ).add_to(points_group)
     
     points_group.add_to(m)
 
@@ -823,12 +860,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
         if feature.get('geometry', {}).get('type') == 'Point'
            and feature.get('geometry', {}).get('coordinates')
     ))
-    marker_basins = [
-        feature.get('properties', {}).get('Basin_Sub_') or 'N/A'
-        for feature in points_data.get('features', [])
-        if feature.get('geometry', {}).get('type') == 'Point'
-           and feature.get('geometry', {}).get('coordinates')
-    ]
+    marker_basins = marker_basins_list
 
     if basins:
         pg_name = points_group.get_name()
@@ -1012,7 +1044,8 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
 
                 function applyFilter() {{
                     for (var i = 0; i < allMarkers.length; i++) {{
-                        if (selectedBasins.has(markerBasins[i])) {{
+                        var show = markerBasins[i].some(function(b) {{ return selectedBasins.has(b); }});
+                        if (show) {{
                             if (!pointsGroup.hasLayer(allMarkers[i])) {{
                                 pointsGroup.addLayer(allMarkers[i]);
                             }}
