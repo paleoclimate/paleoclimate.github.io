@@ -23,10 +23,132 @@ from scipy.spatial.distance import cdist
 from PIL import Image
 import cv2
 
+PALEO_REFERENCE_FRAME_CORRECTIONS = {
+    # Maps a dataset base name (e.g. '100_ma') to an Euler rotation that converts
+    # the input coordinates from the GPlates "OptimisedMantleRef" reference frame
+    # used by the Zahirovic et al. 2022 rotation file to a paleomagnetic-aligned
+    # frame where the equator passes through northern South America at 100 Ma
+    # (Amazonas / Roraima / Pará / Amapá), matching standard paleogeographic atlases.
+    #
+    # Each entry is (pole_lat_deg, pole_lon_deg, angle_deg). The 'default' entry
+    # is applied to every dataset that does not have its own override.
+    # Calibrated empirically against the 100 Ma reference so that Brazilian basins
+    # (Barreirinhas, Pará-Maranhão, Foz do Amazonas) sit on the new equator and
+    # the South America Craton coastline straddles the equatorial zone.
+    'default': (0.0, 60.0, -13.0),
+}
+
+
 def load_geojson(filepath):
     """Load a GeoJSON file."""
     with open(filepath, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+def apply_euler_rotation(lon, lat, pole_lat_deg, pole_lon_deg, angle_deg):
+    """Rotate a single (lon, lat) coordinate by an Euler rotation.
+
+    Uses Rodrigues' rotation formula on the unit sphere. The Euler pole is
+    given as (pole_lat_deg, pole_lon_deg) and the rotation magnitude as
+    angle_deg (positive = counter-clockwise looking from outside the pole).
+    Returns a (lon, lat) tuple in degrees.
+    """
+    lon_rad = np.radians(lon)
+    lat_rad = np.radians(lat)
+    pole_lat_rad = np.radians(pole_lat_deg)
+    pole_lon_rad = np.radians(pole_lon_deg)
+    angle_rad = np.radians(angle_deg)
+
+    p = np.array([
+        np.cos(lat_rad) * np.cos(lon_rad),
+        np.cos(lat_rad) * np.sin(lon_rad),
+        np.sin(lat_rad),
+    ])
+    k = np.array([
+        np.cos(pole_lat_rad) * np.cos(pole_lon_rad),
+        np.cos(pole_lat_rad) * np.sin(pole_lon_rad),
+        np.sin(pole_lat_rad),
+    ])
+
+    cos_a = np.cos(angle_rad)
+    sin_a = np.sin(angle_rad)
+    p_rot = (
+        p * cos_a
+        + np.cross(k, p) * sin_a
+        + k * np.dot(k, p) * (1.0 - cos_a)
+    )
+
+    new_lat = float(np.degrees(np.arcsin(np.clip(p_rot[2], -1.0, 1.0))))
+    new_lon = float(np.degrees(np.arctan2(p_rot[1], p_rot[0])))
+    return new_lon, new_lat
+
+
+def _rotate_coord(coord, pole_lat, pole_lon, angle):
+    new_lon, new_lat = apply_euler_rotation(coord[0], coord[1], pole_lat, pole_lon, angle)
+    return [new_lon, new_lat] + list(coord[2:])
+
+
+def _rotate_coord_list(coords, pole_lat, pole_lon, angle):
+    return [_rotate_coord(c, pole_lat, pole_lon, angle) for c in coords]
+
+
+def _rotate_geometry(geom, pole_lat, pole_lon, angle):
+    """Rotate every coordinate inside a GeoJSON geometry in place.
+
+    Supports Point, MultiPoint, LineString, MultiLineString, Polygon and
+    MultiPolygon. Other types are left untouched.
+    """
+    gtype = geom.get('type')
+    coords = geom.get('coordinates')
+    if coords is None:
+        return geom
+
+    if gtype == 'Point':
+        geom['coordinates'] = _rotate_coord(coords, pole_lat, pole_lon, angle)
+    elif gtype in ('MultiPoint', 'LineString'):
+        geom['coordinates'] = _rotate_coord_list(coords, pole_lat, pole_lon, angle)
+    elif gtype in ('MultiLineString', 'Polygon'):
+        geom['coordinates'] = [
+            _rotate_coord_list(line, pole_lat, pole_lon, angle) for line in coords
+        ]
+    elif gtype == 'MultiPolygon':
+        geom['coordinates'] = [
+            [_rotate_coord_list(ring, pole_lat, pole_lon, angle) for ring in poly]
+            for poly in coords
+        ]
+    return geom
+
+
+def apply_paleo_reference_frame_correction(geojson_data, base_name):
+    """Apply the configured Euler rotation to all geometries in a GeoJSON.
+
+    Looks up the rotation for ``base_name`` in PALEO_REFERENCE_FRAME_CORRECTIONS,
+    falling back to the 'default' entry. Returns a new GeoJSON dict with the
+    rotated coordinates; the input is left unmodified. If no correction is
+    configured (or the configured angle is 0), the input is returned as-is.
+    """
+    correction = PALEO_REFERENCE_FRAME_CORRECTIONS.get(
+        base_name,
+        PALEO_REFERENCE_FRAME_CORRECTIONS.get('default'),
+    )
+    if not correction:
+        return geojson_data
+    pole_lat, pole_lon, angle = correction
+    if angle == 0:
+        return geojson_data
+
+    rotated = json.loads(json.dumps(geojson_data))
+    for feature in rotated.get('features', []):
+        geom = feature.get('geometry')
+        if geom:
+            _rotate_geometry(geom, pole_lat, pole_lon, angle)
+
+    print(
+        f"Applied paleo reference frame correction for '{base_name}': "
+        f"pole=({pole_lat}°, {pole_lon}°), angle={angle}° "
+        f"({len(rotated.get('features', []))} features)"
+    )
+    return rotated
 
 def get_geojson_bounds(geojson_data):
     """Calculate bounds from GeoJSON features."""
@@ -1477,6 +1599,9 @@ def main():
         if n_pts == 0:
             print(f"Skipping {base}: no point features.")
             continue
+
+        points_data = apply_paleo_reference_frame_correction(points_data, base)
+        coastline_data = apply_paleo_reference_frame_correction(coastline_data, base)
 
         original_raster_path = os.path.join('GEOTIFF', f'{base}_idw.tif')
         if not os.path.exists(original_raster_path) and base.endswith('_ma'):
