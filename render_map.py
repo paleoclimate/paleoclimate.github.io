@@ -717,7 +717,8 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     m = folium.Map(
         location=[center_lat, center_lon],
         zoom_start=3,
-        tiles=None
+        tiles=None,
+        crs='EPSG4326'
     )
     
     # Add OpenStreetMap hidden and without checkbox in LayerControl
