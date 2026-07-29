@@ -20,9 +20,26 @@ from rasterio.warp import transform_bounds
 import numpy as np
 from folium import plugins
 import os
+from scipy.spatial.distance import cdist
 from scipy.spatial import cKDTree
 from PIL import Image
 import cv2
+
+# Neighbor-search backends for KNN smoothing and IDW interpolation.
+# Both produce the same weighted averages; they differ only in how the
+# nearest neighbors are found (exhaustive distance matrix vs. k-d tree).
+METHOD_BRUTE = 'brute'
+METHOD_KDTREE = 'kdtree'
+
+METHOD_LABELS = {
+    METHOD_BRUTE: 'Brute Force',
+    METHOD_KDTREE: 'k-d Tree',
+}
+
+
+def method_label(method):
+    """Human-readable name of a neighbor-search backend."""
+    return METHOD_LABELS.get(method, method)
 
 def _format_duration(seconds):
     """Format elapsed seconds for human-readable output."""
@@ -283,23 +300,22 @@ def climate_to_numeric(climate):
     }
     return climate_map.get(climate, 2.0)
 
-
-def get_climate_class(props):
+def get_climate_class(props, default=None):
     """Read the climate classification ('H', 'S' or 'D') from feature properties.
 
     Shapefile-to-GeoJSON exports of the source data have shipped this field as
     both 'Climate_Cl' and 'Climate_cl', so the property name is matched
-    case-insensitively. Returns None when no climate field is present.
+    case-insensitively. Returns ``default`` when no climate field is present.
     """
     if not props:
-        return None
+        return default
     for key, value in props.items():
         if key.lower() == 'climate_cl':
             if value is None:
-                return None
+                return default
             value = str(value).strip().upper()
-            return value or None
-    return None
+            return value or default
+    return default
 
 def extract_points_and_values(points_data):
     """Extract point coordinates and numeric values from GeoJSON."""
@@ -312,68 +328,114 @@ def extract_points_and_values(points_data):
             coords = geom.get('coordinates', [])
             if coords:
                 points.append([coords[0], coords[1]])  # [lon, lat]
-                climate = get_climate_class(props) or 'S'
+                climate = get_climate_class(props, 'S')
                 values.append(climate_to_numeric(climate))
     return np.array(points), np.array(values)
 
-def knn_smooth_values(points, values, k=8, power=2.0, exclude_self=True):
+def knn_smooth_values(points, values, k=8, power=2.0, exclude_self=True,
+                      method=METHOD_BRUTE):
     """
     Apply KNN regression to smooth point values using spatial neighbors.
 
-    Neighbor search uses a KD-tree (scipy.spatial.cKDTree) instead of a
-    brute-force all-pairs distance matrix, which scales as O(n log n) per
-    query rather than O(n^2).
+    Parameters:
+    -----------
+    method : str
+        Neighbor search backend: METHOD_BRUTE (full distance matrix) or
+        METHOD_KDTREE (scipy cKDTree queries).
     """
-    n_points = len(points)
-    if n_points == 0:
+    if len(points) == 0:
         raise ValueError("No points available for KNN")
-    if n_points == 1:
+    if len(points) == 1:
         return values.copy()
 
-    k = min(k, n_points - 1 if exclude_self else n_points)
+    k = min(k, len(points) - 1 if exclude_self else len(points))
     if k <= 0:
         return values.copy()
 
-    tree = cKDTree(points)
-    # Query one extra neighbor when excluding self, since a point is its own
-    # nearest neighbor (distance 0) and needs to be dropped from the result.
-    query_k = min(k + 1, n_points) if exclude_self else k
-    dist, idx = tree.query(points, k=query_k)
-    if query_k == 1:
-        dist = dist[:, None]
-        idx = idx[:, None]
+    if method == METHOD_KDTREE:
+        return _knn_smooth_values_kdtree(points, values, k, power, exclude_self)
+
+    distances = cdist(points, points)
+    if exclude_self:
+        np.fill_diagonal(distances, np.inf)
 
     smoothed = np.zeros_like(values, dtype=np.float64)
-    for i in range(n_points):
-        row_dist = dist[i]
-        row_idx = idx[i]
-        if exclude_self:
-            self_pos = np.where(row_idx == i)[0]
-            if len(self_pos):
-                row_dist = np.delete(row_dist, self_pos[0])
-                row_idx = np.delete(row_idx, self_pos[0])
-            row_dist = row_dist[:k]
-            row_idx = row_idx[:k]
-        row_dist = row_dist.astype(np.float64).copy()
-        row_dist[row_dist == 0] = 1e-10
-        weights = 1.0 / (row_dist ** power)
+    for i in range(len(points)):
+        # Stable sort so coincident points are always picked in index order,
+        # keeping the result identical to the k-d tree backend
+        nearest_idx = np.argsort(distances[i], kind='stable')[:k]
+        nearest_dist = distances[i][nearest_idx].astype(np.float64)
+        nearest_dist[nearest_dist == 0] = 1e-10
+        weights = 1.0 / (nearest_dist ** power)
         weights = weights / np.sum(weights)
-        smoothed[i] = np.sum(weights * values[row_idx])
+        smoothed[i] = np.sum(weights * values[nearest_idx])
 
     return smoothed
 
+
+def _coincident_margin(points):
+    """How many extra neighbors a k-d tree query needs to cover distance ties.
+
+    Datasets contain several points sharing the exact same coordinates, so the
+    neighbor at position k is often tied with others. Querying this many extra
+    neighbors guarantees the whole tied group comes back, which is what makes
+    the index-based tie-break below reproduce the brute-force selection.
+    """
+    _, counts = np.unique(points, axis=0, return_counts=True)
+    return int(counts.max()) - 1
+
+
+def _nearest_neighbors_kdtree(tree, query_points, k, margin, n_points):
+    """Query the k nearest neighbors, ordered by (distance, point index)."""
+    k_query = min(k + margin, n_points)
+    distances, indices = tree.query(query_points, k=k_query)
+    distances = distances.reshape(len(query_points), k_query).astype(np.float64)
+    indices = indices.reshape(len(query_points), k_query)
+
+    # cKDTree sorts by distance only, leaving coincident points in arbitrary
+    # order; re-sorting by (distance, index) matches the brute-force backend.
+    order = np.lexsort((indices, distances), axis=1)
+    rows = np.arange(len(query_points))[:, None]
+    return distances[rows, order], indices[rows, order]
+
+
+def _knn_smooth_values_kdtree(points, values, k, power, exclude_self):
+    """KNN smoothing using a k-d tree for the neighbor queries."""
+    n_points = len(points)
+    tree = cKDTree(points)
+    margin = _coincident_margin(points)
+
+    k_wanted = k + 1 if exclude_self else k
+    distances, indices = _nearest_neighbors_kdtree(tree, points, k_wanted, margin, n_points)
+
+    if exclude_self:
+        # Discard the query point itself. With coincident points the query may
+        # not return its own index, so those rows drop their farthest neighbor
+        # instead to keep the row width uniform.
+        drop = indices == np.arange(n_points)[:, None]
+        missing_self = ~drop.any(axis=1)
+        if np.any(missing_self):
+            drop[missing_self, -1] = True
+        keep = ~drop
+        n_kept = distances.shape[1] - 1
+        distances = distances[keep].reshape(n_points, n_kept)
+        indices = indices[keep].reshape(n_points, n_kept)
+
+    distances = distances[:, :k]
+    indices = indices[:, :k]
+
+    distances = np.where(distances == 0, 1e-10, distances)
+    weights = 1.0 / (distances ** power)
+    weights = weights / np.sum(weights, axis=1, keepdims=True)
+    return np.sum(weights * values[indices], axis=1)
+
 def idw_interpolation(points, values, grid_lons, grid_lats, power=2, n_neighbors=12, 
-                      preserve_points=True, point_radius=0.15):
+                      preserve_points=True, point_radius=0.15, method=METHOD_BRUTE):
     """
     Perform Inverse Distance Weighting (IDW) interpolation using N nearest neighbors.
     
     This implementation mimics ArcGIS's IDW with "VARIABLE N" search radius,
     which uses only the N nearest points for each grid cell interpolation.
-
-    Nearest-neighbor search is done with a KD-tree (scipy.spatial.cKDTree)
-    instead of a brute-force all-pairs distance matrix (cdist), which avoids
-    building an O(n_grid_points x n_points) distance matrix and replaces the
-    per-grid-cell Python loop with a single batched, vectorized query.
     
     Parameters:
     -----------
@@ -395,6 +457,9 @@ def idw_interpolation(points, values, grid_lons, grid_lats, power=2, n_neighbors
         instead of interpolated value (default: True)
     point_radius : float
         Distance threshold (in degrees) for preserving point values (default: 0.15)
+    method : str
+        Neighbor search backend: METHOD_BRUTE (full distance matrix) or
+        METHOD_KDTREE (scipy cKDTree queries).
     
     Returns:
     --------
@@ -411,53 +476,83 @@ def idw_interpolation(points, values, grid_lons, grid_lats, power=2, n_neighbors
     # Limit to n_neighbors nearest points
     n_neighbors = min(n_neighbors, len(points))
     
-    # Build a KD-tree once and query the N nearest data points for every grid
-    # cell in a single vectorized call (instead of a full distance matrix).
-    tree = cKDTree(points)
-    distances, indices = tree.query(grid_points, k=n_neighbors)
-    if n_neighbors == 1:
-        distances = distances[:, None]
-        indices = indices[:, None]
+    if method == METHOD_KDTREE:
+        grid_values = _idw_interpolation_kdtree(
+            points, values, grid_points, power, n_neighbors,
+            preserve_points, point_radius
+        )
+        return grid_values.reshape(lon_grid.shape)
     
-    nearest_dist = distances[:, 0]
-    nearest_idx = indices[:, 0]
+    # Calculate distances from all grid points to all data points
+    distances = cdist(grid_points, points)
     
     # Initialize output array
     grid_values = np.zeros(n_grid_points)
     
-    # If very close to a data point and preserve_points is True, use that value directly
-    if preserve_points:
-        preserve_mask = nearest_dist < point_radius
-    else:
-        preserve_mask = np.zeros(n_grid_points, dtype=bool)
-    grid_values[preserve_mask] = values[nearest_idx[preserve_mask]]
-    
-    # For the remaining grid cells, interpolate using the N nearest neighbors
-    compute_mask = ~preserve_mask
-    if np.any(compute_mask):
-        nearest_dist_full = distances[compute_mask].astype(np.float64).copy()
-        nearest_idx_full = indices[compute_mask]
+    # For each grid point, find the N nearest neighbors and interpolate
+    for i in range(n_grid_points):
+        # Get distances to all data points for this grid cell
+        dist_i = distances[i, :]
         
-        # Avoid division by zero (point exactly on data point)
-        nearest_dist_full[nearest_dist_full == 0] = 1e-10
+        # Find the nearest point
+        min_dist_idx = np.argmin(dist_i)
+        min_dist = dist_i[min_dist_idx]
         
-        # Calculate weights: w = 1 / d^power
-        weights = 1.0 / (nearest_dist_full ** power)
-        
-        # Normalize weights (per grid cell)
-        weights = weights / np.sum(weights, axis=1, keepdims=True)
-        
-        # Weighted average
-        nearest_values = values[nearest_idx_full]
-        grid_values[compute_mask] = np.sum(weights * nearest_values, axis=1)
+        # If very close to a data point and preserve_points is True, use that value directly
+        if preserve_points and min_dist < point_radius:
+            grid_values[i] = values[min_dist_idx]
+        else:
+            # Find indices of N nearest neighbors (stable: ties by point index)
+            nearest_idx = np.argsort(dist_i, kind='stable')[:n_neighbors]
+            nearest_dist = dist_i[nearest_idx]
+            nearest_values = values[nearest_idx]
+            
+            # Avoid division by zero (point exactly on data point)
+            nearest_dist[nearest_dist == 0] = 1e-10
+            
+            # Calculate weights: w = 1 / d^power
+            weights = 1.0 / (nearest_dist ** power)
+            
+            # Normalize weights
+            weights = weights / np.sum(weights)
+            
+            # Weighted average
+            grid_values[i] = np.sum(weights * nearest_values)
     
     # Reshape to grid
     grid_values = grid_values.reshape(lon_grid.shape)
     
     return grid_values
 
+
+def _idw_interpolation_kdtree(points, values, grid_points, power, n_neighbors,
+                              preserve_points, point_radius):
+    """IDW interpolation using a k-d tree for the neighbor queries.
+
+    Returns a flat array of interpolated values, one per grid point.
+    """
+    tree = cKDTree(points)
+    margin = _coincident_margin(points)
+    distances, indices = _nearest_neighbors_kdtree(
+        tree, grid_points, n_neighbors, margin, len(points)
+    )
+    distances = distances[:, :n_neighbors]
+    indices = indices[:, :n_neighbors]
+
+    safe_distances = np.where(distances == 0, 1e-10, distances)
+    weights = 1.0 / (safe_distances ** power)
+    weights = weights / np.sum(weights, axis=1, keepdims=True)
+    grid_values = np.sum(weights * values[indices], axis=1)
+
+    if preserve_points:
+        near = distances[:, 0] < point_radius
+        grid_values[near] = values[indices[near, 0]]
+
+    return grid_values
+
 def create_idw_raster(points_data, output_path, resolution=0.1, power=2, n_neighbors=12,
-                      preserve_points=True, point_radius=0.15, points=None, values=None):
+                      preserve_points=True, point_radius=0.15, points=None, values=None,
+                      method=METHOD_BRUTE):
     """
     Create a GeoTIFF raster from IDW interpolation of point data.
     
@@ -481,6 +576,8 @@ def create_idw_raster(points_data, output_path, resolution=0.1, power=2, n_neigh
         If True, preserve exact values at data point locations (default: True)
     point_radius : float
         Distance threshold for preserving point values (default: 0.15 degrees)
+    method : str
+        Neighbor search backend: METHOD_BRUTE or METHOD_KDTREE
     """
     # Extract points and values
     if points is None or values is None:
@@ -505,12 +602,14 @@ def create_idw_raster(points_data, output_path, resolution=0.1, power=2, n_neigh
     print(f"Bounds: [{min_lat:.2f}, {min_lon:.2f}] to [{max_lat:.2f}, {max_lon:.2f}]")
     print(f"Using {n_neighbors} nearest neighbors for interpolation")
     print(f"Preserve point values: {preserve_points} (radius: {point_radius}°)")
+    print(f"Neighbor search: {method_label(method)}")
     
     # Perform IDW interpolation using N nearest neighbors
     grid_values = idw_interpolation(points, values, grid_lons, grid_lats, 
                                     power=power, n_neighbors=n_neighbors,
                                     preserve_points=preserve_points, 
-                                    point_radius=point_radius)
+                                    point_radius=point_radius,
+                                    method=method)
     
     # Create GeoTIFF
     transform = from_bounds(min_lon, min_lat, max_lon, max_lat, 
@@ -600,7 +699,7 @@ def create_raster_overlay(geotiff_path, map_obj, raster_img_path='raster_overlay
                             if point_values_override is not None and override_index < override_count:
                                 point_value = float(point_values_override[override_index])
                             else:
-                                climate = get_climate_class(props) or 'S'
+                                climate = get_climate_class(props, 'S')
                                 point_value = climate_to_numeric(climate)
                             override_index += 1
                             
@@ -936,8 +1035,12 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                map_title='Paleogeographic Map - 110 Ma', raster_img_path='raster_overlay.png',
                point_values_override=None, raster_layer_name='Raster (IDW Interpolation)',
                gradient_sharp=2.5,
-               color_stats_img_path=None, color_stats_name=None):
+               color_stats_img_path=None, color_stats_name=None,
+               method=None):
     """Create a Folium map with points, coastlines, and optional raster.
+
+    When ``method`` is given, a badge identifying the neighbor search backend
+    (brute force or k-d tree) is stamped on the map.
     """
     
     # Calculate combined bounds
@@ -1042,7 +1145,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     
     marker_basins_list = []
     for (lon, lat), features in coord_groups.items():
-        climates = [get_climate_class(f.get('properties', {})) or '' for f in features]
+        climates = [get_climate_class(f.get('properties', {}), '') for f in features]
         basins = list(OrderedDict.fromkeys(
             f.get('properties', {}).get('Basin_Sub_') or 'N/A' for f in features
         ))
@@ -1420,6 +1523,28 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
 
     # Add coordinate graticule (always visible, 30° intervals)
     _add_graticule(m, interval=30)
+
+    # Stamp the interpolation backend on the map (kept in the PDF export, which
+    # only strips Leaflet controls)
+    if method:
+        badge_html = f"""
+        <div class="method-badge" style="
+            position: fixed;
+            bottom: 8px;
+            right: 8px;
+            z-index: 9999;
+            background: rgba(255,255,255,0.92);
+            border: 1px solid #7f8c8d;
+            border-radius: 3px;
+            padding: 3px 7px;
+            font-family: Arial, sans-serif;
+            font-size: 11px;
+            font-weight: bold;
+            color: #2c3e50;
+            box-shadow: 0 0 2px rgba(0,0,0,0.2);
+        ">Interpolation: {method_label(method)} ({method})</div>
+        """
+        m.get_root().html.add_child(folium.Element(badge_html))
     
     # Fit bounds to raster extent (tightest framing around interpolated area)
     raster_bounds = None
@@ -1580,11 +1705,44 @@ def discover_geojson_datasets(geojson_dir='GEOJSON'):
             pairs.append((base, points_path, coast_path))
     return pairs
 
+def filter_datasets(datasets, requested):
+    """Keep only the datasets named in ``requested``.
+
+    Names may be given with or without the '_ma' suffix, so both '110' and
+    '110_ma' select the 110_ma dataset. Returns all datasets when nothing is
+    requested.
+    """
+    if not requested:
+        return datasets
+
+    selected = []
+    missing = []
+    for wanted in requested:
+        key = wanted.strip().lower()
+        candidates = [key] if key.endswith('_ma') else [key, f'{key}_ma']
+        match = next((d for d in datasets if d[0].lower() in candidates), None)
+        if match is None:
+            missing.append(wanted)
+        elif match not in selected:
+            selected.append(match)
+
+    if missing:
+        available = ', '.join(d[0] for d in datasets)
+        print(f"No dataset matches {missing} (available: {available})")
+    return selected
+
 def _extract_age_sort_key(filename):
     """Extract numeric age from filename for sorting, e.g. 'map_65_ma_...' -> 65."""
     import re
     m = re.search(r'_(\d+)_ma', filename)
     return int(m.group(1)) if m else 0
+
+def _extract_method_tag(filename):
+    """Return the neighbor search backend encoded in a generated filename, if any."""
+    for method in (METHOD_KDTREE, METHOD_BRUTE):
+        if f'_{method}' in filename:
+            return method
+    return ''
 
 def generate_index_html(dir_knn_idw, dir_idw, output='index.html'):
     """Generate an index.html with a dropdown to switch between KNN+IDW map HTMLs."""
@@ -1597,7 +1755,8 @@ def generate_index_html(dir_knn_idw, dir_idw, output='index.html'):
         )
         for h in htmls:
             age = _extract_age_sort_key(h)
-            label = f"{age} Ma"
+            method = _extract_method_tag(h)
+            label = f"{age} Ma ({method})" if method else f"{age} Ma"
             pdf_name = h.replace('.html', '.pdf')
             pdf_path = f"{folder}/{pdf_name}"
             maps_list.append({
@@ -1719,16 +1878,29 @@ def main():
                         help='Directory containing point and coastline GeoJSON files (default: GEOJSON)')
     parser.add_argument('--pdf', action='store_true',
                         help='Export each map to PDF (requires playwright; PDFs are generated with OSM off)')
+    parser.add_argument('--map', dest='maps', nargs='+', metavar='DATASET',
+                        help='Render only the given dataset(s), e.g. --map 110 or --map 110 115 (default: all)')
+    method_group = parser.add_mutually_exclusive_group()
+    method_group.add_argument('--brute', dest='method', action='store_const', const=METHOD_BRUTE,
+                              help='Find KNN/IDW neighbors by brute force (full distance matrix) [default]')
+    method_group.add_argument('--kdtree', dest='method', action='store_const', const=METHOD_KDTREE,
+                              help='Find KNN/IDW neighbors with a k-d tree')
+    parser.set_defaults(method=METHOD_BRUTE)
     args = parser.parse_args()
     power = args.power
     gradient_sharp = args.gradient_sharp
-    params_suffix = f'_power{power}_gradient_sharp{gradient_sharp}'
+    method = args.method
+    params_suffix = f'_power{power}_gradient_sharp{gradient_sharp}_{method}'
 
     datasets = discover_geojson_datasets(args.geojson_dir)
     if not datasets:
         print(f"No datasets found in {args.geojson_dir}/ (need both X.geojson and X_costa.geojson for each X).")
         return
+    datasets = filter_datasets(datasets, args.maps)
+    if not datasets:
+        return
     print(f"Found {len(datasets)} dataset(s): {[b for b, _, _ in datasets]}")
+    print(f"Neighbor search method: {method_label(method)} ({method})")
 
     dir_geotiffs = 'GENERATED_GEOTIFFS'
     dir_idw_maps = 'GENERATED_IDW_MAPS'
@@ -1802,16 +1974,17 @@ def main():
         else:
             print(f"Original raster not found ({original_raster_path}), skipping Original map.")
 
-        print("\nExecuting IDW Interpolation (no KNN)")
+        print(f"\nExecuting IDW Interpolation (no KNN) — {method_label(method)}")
         points, values = extract_points_and_values(points_data)
-        with StepTimer("IDW raster (no KNN)") as t:
+        with StepTimer(f"IDW raster (no KNN, {method})") as t:
             create_idw_raster(
                 points_data=points_data,
                 points=points,
                 values=values,
                 output_path=idw_only_raster_path,
                 resolution=0.1,
-                power=power
+                power=power,
+                method=method
             )
         _record_step(t.label, t.elapsed)
 
@@ -1822,12 +1995,13 @@ def main():
                 coastline_data=coastline_data,
                 geotiff_path=idw_only_raster_path,
                 output_file=map_idw_file,
-                map_title=f'Paleogeographic Map - {title_label} (IDW only)',
+                map_title=f'Paleogeographic Map - {title_label} (IDW only, {method_label(method)})',
                 raster_img_path=raster_overlay_idw_png,
-                raster_layer_name='Raster (IDW only)',
+                raster_layer_name=f'Raster (IDW only, {method})',
                 gradient_sharp=gradient_sharp,
                 color_stats_img_path=raster_overlay_idw_png,
-                color_stats_name=f'Color Stats (IDW)'
+                color_stats_name=f'Color Stats (IDW)',
+                method=method
             )
         _record_step(t.label, t.elapsed)
         generated.append(map_idw_file)
@@ -1836,19 +2010,21 @@ def main():
                 html_to_pdf(map_idw_file, os.path.join(dir_idw_maps, os.path.basename(map_idw_file).replace('.html', '.pdf')))
             _record_step(t.label, t.elapsed)
 
-        print("Executing KNN Smoothing + IDW Interpolation")
-        with StepTimer("KNN smoothing") as t:
-            knn_values = knn_smooth_values(points, values, k=8, power=power, exclude_self=True)
+        print(f"Executing KNN Smoothing + IDW Interpolation — {method_label(method)}")
+        with StepTimer(f"KNN smoothing ({method})") as t:
+            knn_values = knn_smooth_values(points, values, k=8, power=power,
+                                           exclude_self=True, method=method)
         _record_step(t.label, t.elapsed)
 
-        with StepTimer("IDW raster (KNN + IDW)") as t:
+        with StepTimer(f"IDW raster (KNN + IDW, {method})") as t:
             create_idw_raster(
                 points_data=points_data,
                 points=points,
                 values=knn_values,
                 output_path=idw_raster_path,
                 resolution=0.1,
-                power=power
+                power=power,
+                method=method
             )
         _record_step(t.label, t.elapsed)
 
@@ -1859,13 +2035,14 @@ def main():
                 coastline_data=coastline_data,
                 geotiff_path=idw_raster_path,
                 output_file=map_knn_idw_file,
-                map_title=f'Paleogeographic Map - {title_label} (KNN + IDW Interpolated)',
+                map_title=f'Paleogeographic Map - {title_label} (KNN + IDW Interpolated, {method_label(method)})',
                 raster_img_path=raster_overlay_knn_idw_png,
                 point_values_override=knn_values,
-                raster_layer_name='Raster (KNN + IDW)',
+                raster_layer_name=f'Raster (KNN + IDW, {method})',
                 gradient_sharp=gradient_sharp,
                 color_stats_img_path=raster_overlay_knn_idw_png,
-                color_stats_name=f'Color Stats (KNN + IDW)'
+                color_stats_name=f'Color Stats (KNN + IDW)',
+                method=method
             )
         _record_step(t.label, t.elapsed)
         generated.append(map_knn_idw_file)
@@ -1888,6 +2065,7 @@ def main():
     print("All maps generated successfully!")
     print("=" * 60)
     print(f"Power: {power}, Gradient sharp: {gradient_sharp}")
+    print(f"Neighbor search method: {method_label(method)} ({method})")
     print(f"Datasets processed: {len(datasets)}")
     print(f"GeoTIFFs: {dir_geotiffs}/")
     print(f"IDW-only maps (HTML/PDF): {dir_idw_maps}/")
