@@ -9,6 +9,7 @@ This script:
 """
 
 import argparse
+import time
 import folium
 from folium.raster_layers import ImageOverlay
 from branca.element import MacroElement, Template
@@ -22,6 +23,40 @@ import os
 from scipy.spatial.distance import cdist
 from PIL import Image
 import cv2
+
+def _format_duration(seconds):
+    """Format elapsed seconds for human-readable output."""
+    if seconds < 0.001:
+        return f"{seconds * 1_000_000:.0f} µs"
+    if seconds < 1:
+        return f"{seconds * 1000:.1f} ms"
+    if seconds < 60:
+        return f"{seconds:.2f} s"
+    minutes, secs = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {secs:.1f}s"
+    hours, minutes = divmod(int(minutes), 60)
+    return f"{hours}h {minutes}m {secs:.0f}s"
+
+
+class StepTimer:
+    """Context manager that records and prints step elapsed time."""
+
+    def __init__(self, label, indent=1):
+        self.label = label
+        self.indent = indent
+        self.elapsed = None
+
+    def __enter__(self):
+        self._start = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.elapsed = time.perf_counter() - self._start
+        prefix = "  " * self.indent
+        print(f"{prefix}[{_format_duration(self.elapsed)}] {self.label}")
+        return False
+
 
 PALEO_REFERENCE_FRAME_CORRECTIONS = {
     # Maps a dataset base name (e.g. '100_ma') to an Euler rotation that converts
@@ -1555,8 +1590,23 @@ function downloadPdf() {{
         f.write(html)
     print(f"Index page generated: {output}")
 
+def _print_timing_summary(total_elapsed, dataset_timings):
+    """Print a summary of execution times per dataset and overall."""
+    print("\n" + "=" * 60)
+    print("Timing summary")
+    print("=" * 60)
+    print(f"Total elapsed: {_format_duration(total_elapsed)}")
+    for entry in dataset_timings:
+        print(f"\n{entry['base']} — {_format_duration(entry['total'])}")
+        for step in entry['steps']:
+            print(f"  [{_format_duration(step['elapsed'])}] {step['label']}")
+
+
 def main():
     """Generate maps for every point+costa dataset found in GEOJSON/."""
+    script_start = time.perf_counter()
+    dataset_timings = []
+
     parser = argparse.ArgumentParser(description='Generate paleogeographic maps (IDW and KNN+IDW) for all datasets in GEOJSON/.')
     parser.add_argument('--power', type=float, required=True,
                         help='Power parameter for IDW and KNN (e.g. 4.0)')
@@ -1585,13 +1635,22 @@ def main():
 
     generated = []
     for base, points_path, coast_path in datasets:
+        dataset_start = time.perf_counter()
+        step_timings = []
+
+        def _record_step(label, elapsed):
+            step_timings.append({'label': label, 'elapsed': elapsed})
+
         title_label = base.replace('_', ' ')  # e.g. 110 ma
         print("\n" + "=" * 60)
         print(f"DATASET: {base}")
         print("=" * 60)
 
-        points_data = load_geojson(points_path)
-        coastline_data = load_geojson(coast_path)
+        with StepTimer("Load GeoJSON") as t:
+            points_data = load_geojson(points_path)
+            coastline_data = load_geojson(coast_path)
+        _record_step(t.label, t.elapsed)
+
         n_pts = len(points_data.get('features', []))
         n_coast = len(coastline_data.get('features', []))
         print(f"Loaded {n_pts} points from {points_path}")
@@ -1600,8 +1659,10 @@ def main():
             print(f"Skipping {base}: no point features.")
             continue
 
-        points_data = apply_paleo_reference_frame_correction(points_data, base)
-        coastline_data = apply_paleo_reference_frame_correction(coastline_data, base)
+        with StepTimer("Paleo reference frame correction") as t:
+            points_data = apply_paleo_reference_frame_correction(points_data, base)
+            coastline_data = apply_paleo_reference_frame_correction(coastline_data, base)
+        _record_step(t.label, t.elapsed)
 
         original_raster_path = os.path.join('GEOTIFF', f'{base}_idw.tif')
         if not os.path.exists(original_raster_path) and base.endswith('_ma'):
@@ -1618,76 +1679,107 @@ def main():
 
         if os.path.exists(original_raster_path):
             print("\nGenerating Map: Original Data (with original raster)")
-            create_map(
-                points_data=points_data,
-                coastline_data=coastline_data,
-                geotiff_path=original_raster_path,
-                output_file=map1_file,
-                map_title=f'Paleogeographic Map - {title_label} (Original Data)',
-                raster_img_path=os.path.join(dir_idw_maps, f'raster_overlay_{base}_original.png'),
-                raster_layer_name='Raster (Original)',
-                gradient_sharp=gradient_sharp
-            )
+            with StepTimer("Map: Original Data") as t:
+                create_map(
+                    points_data=points_data,
+                    coastline_data=coastline_data,
+                    geotiff_path=original_raster_path,
+                    output_file=map1_file,
+                    map_title=f'Paleogeographic Map - {title_label} (Original Data)',
+                    raster_img_path=os.path.join(dir_idw_maps, f'raster_overlay_{base}_original.png'),
+                    raster_layer_name='Raster (Original)',
+                    gradient_sharp=gradient_sharp
+                )
+            _record_step(t.label, t.elapsed)
             generated.append(map1_file)
             if args.pdf:
-                html_to_pdf(map1_file, os.path.join(dir_idw_maps, os.path.basename(map1_file).replace('.html', '.pdf')))
+                with StepTimer("PDF: Original Data") as t:
+                    html_to_pdf(map1_file, os.path.join(dir_idw_maps, os.path.basename(map1_file).replace('.html', '.pdf')))
+                _record_step(t.label, t.elapsed)
         else:
             print(f"Original raster not found ({original_raster_path}), skipping Original map.")
 
         print("\nExecuting IDW Interpolation (no KNN)")
         points, values = extract_points_and_values(points_data)
-        create_idw_raster(
-            points_data=points_data,
-            points=points,
-            values=values,
-            output_path=idw_only_raster_path,
-            resolution=0.1,
-            power=power
-        )
+        with StepTimer("IDW raster (no KNN)") as t:
+            create_idw_raster(
+                points_data=points_data,
+                points=points,
+                values=values,
+                output_path=idw_only_raster_path,
+                resolution=0.1,
+                power=power
+            )
+        _record_step(t.label, t.elapsed)
+
         print(f"Generating Map: IDW only ({map_idw_file})")
-        create_map(
-            points_data=points_data,
-            coastline_data=coastline_data,
-            geotiff_path=idw_only_raster_path,
-            output_file=map_idw_file,
-            map_title=f'Paleogeographic Map - {title_label} (IDW only)',
-            raster_img_path=raster_overlay_idw_png,
-            raster_layer_name='Raster (IDW only)',
-            gradient_sharp=gradient_sharp,
-            color_stats_img_path=raster_overlay_idw_png,
-            color_stats_name=f'Color Stats (IDW)'
-        )
+        with StepTimer("Map: IDW only") as t:
+            create_map(
+                points_data=points_data,
+                coastline_data=coastline_data,
+                geotiff_path=idw_only_raster_path,
+                output_file=map_idw_file,
+                map_title=f'Paleogeographic Map - {title_label} (IDW only)',
+                raster_img_path=raster_overlay_idw_png,
+                raster_layer_name='Raster (IDW only)',
+                gradient_sharp=gradient_sharp,
+                color_stats_img_path=raster_overlay_idw_png,
+                color_stats_name=f'Color Stats (IDW)'
+            )
+        _record_step(t.label, t.elapsed)
         generated.append(map_idw_file)
         if args.pdf:
-            html_to_pdf(map_idw_file, os.path.join(dir_idw_maps, os.path.basename(map_idw_file).replace('.html', '.pdf')))
+            with StepTimer("PDF: IDW only") as t:
+                html_to_pdf(map_idw_file, os.path.join(dir_idw_maps, os.path.basename(map_idw_file).replace('.html', '.pdf')))
+            _record_step(t.label, t.elapsed)
 
         print("Executing KNN Smoothing + IDW Interpolation")
-        knn_values = knn_smooth_values(points, values, k=8, power=power, exclude_self=True)
-        create_idw_raster(
-            points_data=points_data,
-            points=points,
-            values=knn_values,
-            output_path=idw_raster_path,
-            resolution=0.1,
-            power=power
-        )
+        with StepTimer("KNN smoothing") as t:
+            knn_values = knn_smooth_values(points, values, k=8, power=power, exclude_self=True)
+        _record_step(t.label, t.elapsed)
+
+        with StepTimer("IDW raster (KNN + IDW)") as t:
+            create_idw_raster(
+                points_data=points_data,
+                points=points,
+                values=knn_values,
+                output_path=idw_raster_path,
+                resolution=0.1,
+                power=power
+            )
+        _record_step(t.label, t.elapsed)
+
         print(f"Generating Map: KNN + IDW ({map_knn_idw_file})")
-        create_map(
-            points_data=points_data,
-            coastline_data=coastline_data,
-            geotiff_path=idw_raster_path,
-            output_file=map_knn_idw_file,
-            map_title=f'Paleogeographic Map - {title_label} (KNN + IDW Interpolated)',
-            raster_img_path=raster_overlay_knn_idw_png,
-            point_values_override=knn_values,
-            raster_layer_name='Raster (KNN + IDW)',
-            gradient_sharp=gradient_sharp,
-            color_stats_img_path=raster_overlay_knn_idw_png,
-            color_stats_name=f'Color Stats (KNN + IDW)'
-        )
+        with StepTimer("Map: KNN + IDW") as t:
+            create_map(
+                points_data=points_data,
+                coastline_data=coastline_data,
+                geotiff_path=idw_raster_path,
+                output_file=map_knn_idw_file,
+                map_title=f'Paleogeographic Map - {title_label} (KNN + IDW Interpolated)',
+                raster_img_path=raster_overlay_knn_idw_png,
+                point_values_override=knn_values,
+                raster_layer_name='Raster (KNN + IDW)',
+                gradient_sharp=gradient_sharp,
+                color_stats_img_path=raster_overlay_knn_idw_png,
+                color_stats_name=f'Color Stats (KNN + IDW)'
+            )
+        _record_step(t.label, t.elapsed)
         generated.append(map_knn_idw_file)
         if args.pdf:
-            html_to_pdf(map_knn_idw_file, os.path.join(dir_knn_idw_maps, os.path.basename(map_knn_idw_file).replace('.html', '.pdf')))
+            with StepTimer("PDF: KNN + IDW") as t:
+                html_to_pdf(map_knn_idw_file, os.path.join(dir_knn_idw_maps, os.path.basename(map_knn_idw_file).replace('.html', '.pdf')))
+            _record_step(t.label, t.elapsed)
+
+        dataset_total = time.perf_counter() - dataset_start
+        dataset_timings.append({
+            'base': base,
+            'total': dataset_total,
+            'steps': step_timings,
+        })
+        print(f"  Dataset total: {_format_duration(dataset_total)}")
+
+    total_elapsed = time.perf_counter() - script_start
 
     print("\n" + "=" * 60)
     print("All maps generated successfully!")
@@ -1700,7 +1792,10 @@ def main():
     for f in generated:
         print(f"  {f}")
 
-    generate_index_html(dir_knn_idw_maps, dir_idw_maps)
+    with StepTimer("Generate index.html", indent=0) as t:
+        generate_index_html(dir_knn_idw_maps, dir_idw_maps)
+
+    _print_timing_summary(total_elapsed, dataset_timings)
 
 if __name__ == '__main__':
     main()
