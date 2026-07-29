@@ -20,7 +20,7 @@ from rasterio.warp import transform_bounds
 import numpy as np
 from folium import plugins
 import os
-from scipy.spatial.distance import cdist
+from scipy.spatial import cKDTree
 from PIL import Image
 import cv2
 
@@ -127,11 +127,46 @@ def _rotate_coord_list(coords, pole_lat, pole_lon, angle):
     return [_rotate_coord(c, pole_lat, pole_lon, angle) for c in coords]
 
 
+def _split_line_at_antimeridian(coords):
+    """Split a rotated coordinate list wherever it crosses the antimeridian.
+
+    Rotation wraps longitudes back into [-180, 180], so a line that ends up
+    straddling ±180° contains a segment that jumps ~360° in longitude. Leaflet
+    would draw that segment the long way round, as a horizontal streak across
+    the whole map. Each crossing is cut at ±180°, interpolating the latitude of
+    the crossing so both parts still reach the edge of the map.
+    """
+    if len(coords) < 2:
+        return [list(coords)] if coords else []
+
+    parts = []
+    current = [coords[0]]
+    for previous, point in zip(coords, coords[1:]):
+        delta = point[0] - previous[0]
+        if abs(delta) > 180:
+            # Longitude of the edge this segment leaves through (its mirror is
+            # where the continuation re-enters on the other side of the map).
+            exit_lon = 180.0 if delta < 0 else -180.0
+            unwrapped_lon = point[0] + (360.0 if delta < 0 else -360.0)
+            span = unwrapped_lon - previous[0]
+            t = (exit_lon - previous[0]) / span if span else 0.0
+            lat_crossing = previous[1] + t * (point[1] - previous[1])
+            current.append([exit_lon, lat_crossing])
+            parts.append(current)
+            current = [[-exit_lon, lat_crossing], point]
+        else:
+            current.append(point)
+    if len(current) > 1:
+        parts.append(current)
+    return parts
+
+
 def _rotate_geometry(geom, pole_lat, pole_lon, angle):
     """Rotate every coordinate inside a GeoJSON geometry in place.
 
     Supports Point, MultiPoint, LineString, MultiLineString, Polygon and
-    MultiPolygon. Other types are left untouched.
+    MultiPolygon. Other types are left untouched. Line geometries are also
+    split at the antimeridian, since rotation can push them across ±180°.
     """
     gtype = geom.get('type')
     coords = geom.get('coordinates')
@@ -140,9 +175,30 @@ def _rotate_geometry(geom, pole_lat, pole_lon, angle):
 
     if gtype == 'Point':
         geom['coordinates'] = _rotate_coord(coords, pole_lat, pole_lon, angle)
-    elif gtype in ('MultiPoint', 'LineString'):
+    elif gtype == 'MultiPoint':
         geom['coordinates'] = _rotate_coord_list(coords, pole_lat, pole_lon, angle)
-    elif gtype in ('MultiLineString', 'Polygon'):
+    elif gtype == 'LineString':
+        rotated = _rotate_coord_list(coords, pole_lat, pole_lon, angle)
+        if len(rotated) < 2:
+            geom['coordinates'] = rotated
+        else:
+            parts = _split_line_at_antimeridian(rotated)
+            if len(parts) == 1:
+                geom['coordinates'] = parts[0]
+            else:
+                # Also covers the degenerate case of no drawable part left.
+                geom['type'] = 'MultiLineString'
+                geom['coordinates'] = parts
+    elif gtype == 'MultiLineString':
+        split_lines = []
+        for line in coords:
+            rotated = _rotate_coord_list(line, pole_lat, pole_lon, angle)
+            if len(rotated) < 2:
+                split_lines.append(rotated)
+            else:
+                split_lines.extend(_split_line_at_antimeridian(rotated))
+        geom['coordinates'] = split_lines
+    elif gtype == 'Polygon':
         geom['coordinates'] = [
             _rotate_coord_list(line, pole_lat, pole_lon, angle) for line in coords
         ]
@@ -196,6 +252,8 @@ def get_geojson_bounds(geojson_data):
                 all_coords.append(coords)
         elif geom.get('type') in ['LineString', 'MultiLineString']:
             coords = geom.get('coordinates', [])
+            if not coords or not coords[0]:
+                continue
             if isinstance(coords[0][0], list):  # MultiLineString
                 for line in coords:
                     all_coords.extend(line)
@@ -225,6 +283,24 @@ def climate_to_numeric(climate):
     }
     return climate_map.get(climate, 2.0)
 
+
+def get_climate_class(props):
+    """Read the climate classification ('H', 'S' or 'D') from feature properties.
+
+    Shapefile-to-GeoJSON exports of the source data have shipped this field as
+    both 'Climate_Cl' and 'Climate_cl', so the property name is matched
+    case-insensitively. Returns None when no climate field is present.
+    """
+    if not props:
+        return None
+    for key, value in props.items():
+        if key.lower() == 'climate_cl':
+            if value is None:
+                return None
+            value = str(value).strip().upper()
+            return value or None
+    return None
+
 def extract_points_and_values(points_data):
     """Extract point coordinates and numeric values from GeoJSON."""
     points = []
@@ -236,35 +312,53 @@ def extract_points_and_values(points_data):
             coords = geom.get('coordinates', [])
             if coords:
                 points.append([coords[0], coords[1]])  # [lon, lat]
-                climate = props.get('Climate_Cl', 'S')
+                climate = get_climate_class(props) or 'S'
                 values.append(climate_to_numeric(climate))
     return np.array(points), np.array(values)
 
 def knn_smooth_values(points, values, k=8, power=2.0, exclude_self=True):
     """
     Apply KNN regression to smooth point values using spatial neighbors.
+
+    Neighbor search uses a KD-tree (scipy.spatial.cKDTree) instead of a
+    brute-force all-pairs distance matrix, which scales as O(n log n) per
+    query rather than O(n^2).
     """
-    if len(points) == 0:
+    n_points = len(points)
+    if n_points == 0:
         raise ValueError("No points available for KNN")
-    if len(points) == 1:
+    if n_points == 1:
         return values.copy()
 
-    distances = cdist(points, points)
-    if exclude_self:
-        np.fill_diagonal(distances, np.inf)
-
-    k = min(k, len(points) - 1 if exclude_self else len(points))
+    k = min(k, n_points - 1 if exclude_self else n_points)
     if k <= 0:
         return values.copy()
 
+    tree = cKDTree(points)
+    # Query one extra neighbor when excluding self, since a point is its own
+    # nearest neighbor (distance 0) and needs to be dropped from the result.
+    query_k = min(k + 1, n_points) if exclude_self else k
+    dist, idx = tree.query(points, k=query_k)
+    if query_k == 1:
+        dist = dist[:, None]
+        idx = idx[:, None]
+
     smoothed = np.zeros_like(values, dtype=np.float64)
-    for i in range(len(points)):
-        nearest_idx = np.argsort(distances[i])[:k]
-        nearest_dist = distances[i][nearest_idx].astype(np.float64)
-        nearest_dist[nearest_dist == 0] = 1e-10
-        weights = 1.0 / (nearest_dist ** power)
+    for i in range(n_points):
+        row_dist = dist[i]
+        row_idx = idx[i]
+        if exclude_self:
+            self_pos = np.where(row_idx == i)[0]
+            if len(self_pos):
+                row_dist = np.delete(row_dist, self_pos[0])
+                row_idx = np.delete(row_idx, self_pos[0])
+            row_dist = row_dist[:k]
+            row_idx = row_idx[:k]
+        row_dist = row_dist.astype(np.float64).copy()
+        row_dist[row_dist == 0] = 1e-10
+        weights = 1.0 / (row_dist ** power)
         weights = weights / np.sum(weights)
-        smoothed[i] = np.sum(weights * values[nearest_idx])
+        smoothed[i] = np.sum(weights * values[row_idx])
 
     return smoothed
 
@@ -275,6 +369,11 @@ def idw_interpolation(points, values, grid_lons, grid_lats, power=2, n_neighbors
     
     This implementation mimics ArcGIS's IDW with "VARIABLE N" search radius,
     which uses only the N nearest points for each grid cell interpolation.
+
+    Nearest-neighbor search is done with a KD-tree (scipy.spatial.cKDTree)
+    instead of a brute-force all-pairs distance matrix (cdist), which avoids
+    building an O(n_grid_points x n_points) distance matrix and replaces the
+    per-grid-cell Python loop with a single batched, vectorized query.
     
     Parameters:
     -----------
@@ -309,44 +408,48 @@ def idw_interpolation(points, values, grid_lons, grid_lats, power=2, n_neighbors
     grid_points = np.column_stack([lon_grid.ravel(), lat_grid.ravel()])
     n_grid_points = len(grid_points)
     
-    # Calculate distances from all grid points to all data points
-    distances = cdist(grid_points, points)
-    
     # Limit to n_neighbors nearest points
     n_neighbors = min(n_neighbors, len(points))
+    
+    # Build a KD-tree once and query the N nearest data points for every grid
+    # cell in a single vectorized call (instead of a full distance matrix).
+    tree = cKDTree(points)
+    distances, indices = tree.query(grid_points, k=n_neighbors)
+    if n_neighbors == 1:
+        distances = distances[:, None]
+        indices = indices[:, None]
+    
+    nearest_dist = distances[:, 0]
+    nearest_idx = indices[:, 0]
     
     # Initialize output array
     grid_values = np.zeros(n_grid_points)
     
-    # For each grid point, find the N nearest neighbors and interpolate
-    for i in range(n_grid_points):
-        # Get distances to all data points for this grid cell
-        dist_i = distances[i, :]
+    # If very close to a data point and preserve_points is True, use that value directly
+    if preserve_points:
+        preserve_mask = nearest_dist < point_radius
+    else:
+        preserve_mask = np.zeros(n_grid_points, dtype=bool)
+    grid_values[preserve_mask] = values[nearest_idx[preserve_mask]]
+    
+    # For the remaining grid cells, interpolate using the N nearest neighbors
+    compute_mask = ~preserve_mask
+    if np.any(compute_mask):
+        nearest_dist_full = distances[compute_mask].astype(np.float64).copy()
+        nearest_idx_full = indices[compute_mask]
         
-        # Find the nearest point
-        min_dist_idx = np.argmin(dist_i)
-        min_dist = dist_i[min_dist_idx]
+        # Avoid division by zero (point exactly on data point)
+        nearest_dist_full[nearest_dist_full == 0] = 1e-10
         
-        # If very close to a data point and preserve_points is True, use that value directly
-        if preserve_points and min_dist < point_radius:
-            grid_values[i] = values[min_dist_idx]
-        else:
-            # Find indices of N nearest neighbors
-            nearest_idx = np.argsort(dist_i)[:n_neighbors]
-            nearest_dist = dist_i[nearest_idx]
-            nearest_values = values[nearest_idx]
-            
-            # Avoid division by zero (point exactly on data point)
-            nearest_dist[nearest_dist == 0] = 1e-10
-            
-            # Calculate weights: w = 1 / d^power
-            weights = 1.0 / (nearest_dist ** power)
-            
-            # Normalize weights
-            weights = weights / np.sum(weights)
-            
-            # Weighted average
-            grid_values[i] = np.sum(weights * nearest_values)
+        # Calculate weights: w = 1 / d^power
+        weights = 1.0 / (nearest_dist_full ** power)
+        
+        # Normalize weights (per grid cell)
+        weights = weights / np.sum(weights, axis=1, keepdims=True)
+        
+        # Weighted average
+        nearest_values = values[nearest_idx_full]
+        grid_values[compute_mask] = np.sum(weights * nearest_values, axis=1)
     
     # Reshape to grid
     grid_values = grid_values.reshape(lon_grid.shape)
@@ -497,7 +600,7 @@ def create_raster_overlay(geotiff_path, map_obj, raster_img_path='raster_overlay
                             if point_values_override is not None and override_index < override_count:
                                 point_value = float(point_values_override[override_index])
                             else:
-                                climate = props.get('Climate_Cl', 'S')
+                                climate = get_climate_class(props) or 'S'
                                 point_value = climate_to_numeric(climate)
                             override_index += 1
                             
@@ -939,7 +1042,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     
     marker_basins_list = []
     for (lon, lat), features in coord_groups.items():
-        climates = [f.get('properties', {}).get('Climate_Cl', '') for f in features]
+        climates = [get_climate_class(f.get('properties', {})) or '' for f in features]
         basins = list(OrderedDict.fromkeys(
             f.get('properties', {}).get('Basin_Sub_') or 'N/A' for f in features
         ))
@@ -952,7 +1055,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             formation = props.get('Formation') or 'N/A'
             basin = props.get('Basin_Sub_') or 'N/A'
             country = props.get('Country') or 'N/A'
-            climate_val = props.get('Climate_Cl') or 'N/A'
+            climate_val = get_climate_class(props) or 'N/A'
             age = props.get('TIME') or 'N/A'
             popup_html = (
                 '<div style="font-family: Arial; font-size: 12px;">'
@@ -968,7 +1071,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             parts = []
             for idx, feat in enumerate(features, 1):
                 props = feat.get('properties', {})
-                climate = props.get('Climate_Cl') or ''
+                climate = get_climate_class(props) or ''
                 dot_color = color_map.get(climate, 'gray')
                 formation = props.get('Formation') or 'N/A'
                 basin = props.get('Basin_Sub_') or 'N/A'
