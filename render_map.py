@@ -9,6 +9,8 @@ This script:
 """
 
 import argparse
+import sys
+import threading
 import time
 import folium
 from folium.raster_layers import ImageOverlay
@@ -24,6 +26,16 @@ from scipy.spatial.distance import cdist
 from scipy.spatial import cKDTree
 from PIL import Image
 import cv2
+
+try:
+    import resource
+except ImportError:  # not available on Windows
+    resource = None
+
+try:
+    import psutil
+except ImportError:  # optional; /proc is used instead on Linux
+    psutil = None
 
 # Neighbor-search backends for KNN smoothing and IDW interpolation.
 # Both produce the same weighted averages; they differ only in how the
@@ -56,22 +68,146 @@ def _format_duration(seconds):
     return f"{hours}h {minutes}m {secs:.0f}s"
 
 
+def _format_bytes(num_bytes, signed=False):
+    """Format a byte count for human-readable output."""
+    if num_bytes is None:
+        return "n/a"
+    sign = ('-' if num_bytes < 0 else '+') if signed else ''
+    value = float(abs(num_bytes))
+    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+        if value < 1024 or unit == 'TB':
+            precision = 0 if unit == 'B' else 1
+            return f"{sign}{value:.{precision}f} {unit}"
+        value /= 1024
+
+
+_PROCESS = psutil.Process() if psutil is not None else None
+_PAGE_SIZE = os.sysconf('SC_PAGE_SIZE') if hasattr(os, 'sysconf') else 4096
+
+
+def _current_rss():
+    """Resident set size of this process in bytes, or None if unavailable."""
+    if _PROCESS is not None:
+        try:
+            return _PROCESS.memory_info().rss
+        except Exception:
+            pass
+    try:
+        with open('/proc/self/statm', 'r') as f:
+            return int(f.read().split()[1]) * _PAGE_SIZE
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _peak_rss():
+    """Peak resident set size of this process in bytes, or None if unavailable."""
+    if resource is None:
+        return None
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports kibibytes; macOS/BSD report bytes.
+    return peak if sys.platform == 'darwin' else peak * 1024
+
+
+class _RssSampler:
+    """Background sampler that tracks peak RSS inside open measurement windows.
+
+    Peak memory cannot be read after the fact, so RSS is polled on a daemon
+    thread while steps run. Each window (a step, a dataset, the whole script)
+    registers a watcher that keeps the highest value seen while it is open.
+    """
+
+    def __init__(self, interval=0.02):
+        self.interval = interval
+        self._watchers = []
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+
+    def start(self):
+        if self._thread is not None or _current_rss() is None:
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _run(self):
+        while not self._stop.wait(self.interval):
+            self.sample()
+
+    def sample(self):
+        """Read RSS now and feed it to every open watcher."""
+        rss = _current_rss()
+        if rss is None:
+            return None
+        with self._lock:
+            for watcher in self._watchers:
+                if rss > watcher['peak']:
+                    watcher['peak'] = rss
+        return rss
+
+    def watch(self, start_rss=None):
+        watcher = {'peak': start_rss or 0}
+        with self._lock:
+            self._watchers.append(watcher)
+        return watcher
+
+    def release(self, watcher):
+        """Close a watcher and return the peak RSS observed while it was open."""
+        self.sample()
+        with self._lock:
+            self._watchers = [w for w in self._watchers if w is not watcher]
+        return watcher['peak'] or None
+
+
+_RSS_SAMPLER = _RssSampler()
+
+
+def _format_memory(delta, peak):
+    """Format the RAM part of a metrics line, or '' when RSS is unavailable."""
+    parts = []
+    if delta is not None:
+        parts.append(f"Δ {_format_bytes(delta, signed=True)}")
+    if peak is not None:
+        parts.append(f"peak {_format_bytes(peak)}")
+    return ", ".join(parts)
+
+
+def _format_metrics(elapsed, rss_delta=None, rss_peak=None):
+    """Format elapsed time plus RAM usage for human-readable output."""
+    memory = _format_memory(rss_delta, rss_peak)
+    if not memory:
+        return _format_duration(elapsed)
+    return f"{_format_duration(elapsed)} | RAM {memory}"
+
+
 class StepTimer:
-    """Context manager that records and prints step elapsed time."""
+    """Context manager that records and prints step elapsed time and RAM usage."""
 
     def __init__(self, label, indent=1):
         self.label = label
         self.indent = indent
         self.elapsed = None
+        self.rss_start = None
+        self.rss_end = None
+        self.rss_delta = None
+        self.rss_peak = None
 
     def __enter__(self):
+        self.rss_start = _RSS_SAMPLER.sample()
+        self._watcher = _RSS_SAMPLER.watch(self.rss_start)
         self._start = time.perf_counter()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.elapsed = time.perf_counter() - self._start
+        self.rss_end = _RSS_SAMPLER.sample()
+        self.rss_peak = _RSS_SAMPLER.release(self._watcher)
+        if self.rss_start is not None and self.rss_end is not None:
+            self.rss_delta = self.rss_end - self.rss_start
         prefix = "  " * self.indent
-        print(f"{prefix}[{_format_duration(self.elapsed)}] {self.label}")
+        print(f"{prefix}[{_format_metrics(self.elapsed, self.rss_delta, self.rss_peak)}] {self.label}")
         return False
 
 
@@ -1852,22 +1988,33 @@ function downloadPdf() {{
         f.write(html)
     print(f"Index page generated: {output}")
 
-def _print_timing_summary(total_elapsed, dataset_timings):
-    """Print a summary of execution times per dataset and overall."""
+def _print_metrics_summary(total_elapsed, dataset_metrics, rss_start, rss_end, rss_peak):
+    """Print a summary of execution times and RAM usage per dataset and overall."""
     print("\n" + "=" * 60)
-    print("Timing summary")
+    print("Timing and memory summary")
     print("=" * 60)
     print(f"Total elapsed: {_format_duration(total_elapsed)}")
-    for entry in dataset_timings:
-        print(f"\n{entry['base']} — {_format_duration(entry['total'])}")
+    if rss_start is not None and rss_end is not None:
+        print(f"RAM (RSS) at start: {_format_bytes(rss_start)}")
+        print(f"RAM (RSS) at end:   {_format_bytes(rss_end)} "
+              f"({_format_bytes(rss_end - rss_start, signed=True)})")
+    if rss_peak is not None:
+        print(f"RAM (RSS) peak:     {_format_bytes(rss_peak)}")
+    else:
+        print("RAM (RSS): unavailable on this platform (install psutil for memory metrics)")
+    for entry in dataset_metrics:
+        print(f"\n{entry['base']} — {_format_metrics(entry['total'], entry['rss_delta'], entry['rss_peak'])}")
         for step in entry['steps']:
-            print(f"  [{_format_duration(step['elapsed'])}] {step['label']}")
+            print(f"  [{_format_metrics(step['elapsed'], step['rss_delta'], step['rss_peak'])}] {step['label']}")
 
 
 def main():
     """Generate maps for every point+costa dataset found in GEOJSON/."""
+    _RSS_SAMPLER.start()
     script_start = time.perf_counter()
-    dataset_timings = []
+    script_rss_start = _RSS_SAMPLER.sample()
+    script_watcher = _RSS_SAMPLER.watch(script_rss_start)
+    dataset_metrics = []
 
     parser = argparse.ArgumentParser(description='Generate paleogeographic maps (IDW and KNN+IDW) for all datasets in GEOJSON/.')
     parser.add_argument('--power', type=float, required=True,
@@ -1911,10 +2058,17 @@ def main():
     generated = []
     for base, points_path, coast_path in datasets:
         dataset_start = time.perf_counter()
-        step_timings = []
+        dataset_rss_start = _RSS_SAMPLER.sample()
+        dataset_watcher = _RSS_SAMPLER.watch(dataset_rss_start)
+        step_metrics = []
 
-        def _record_step(label, elapsed):
-            step_timings.append({'label': label, 'elapsed': elapsed})
+        def _record_step(timer):
+            step_metrics.append({
+                'label': timer.label,
+                'elapsed': timer.elapsed,
+                'rss_delta': timer.rss_delta,
+                'rss_peak': timer.rss_peak,
+            })
 
         title_label = base.replace('_', ' ')  # e.g. 110 ma
         print("\n" + "=" * 60)
@@ -1924,7 +2078,7 @@ def main():
         with StepTimer("Load GeoJSON") as t:
             points_data = load_geojson(points_path)
             coastline_data = load_geojson(coast_path)
-        _record_step(t.label, t.elapsed)
+        _record_step(t)
 
         n_pts = len(points_data.get('features', []))
         n_coast = len(coastline_data.get('features', []))
@@ -1932,12 +2086,13 @@ def main():
         print(f"Loaded {n_coast} coastline features from {coast_path}")
         if n_pts == 0:
             print(f"Skipping {base}: no point features.")
+            _RSS_SAMPLER.release(dataset_watcher)
             continue
 
         with StepTimer("Paleo reference frame correction") as t:
             points_data = apply_paleo_reference_frame_correction(points_data, base)
             coastline_data = apply_paleo_reference_frame_correction(coastline_data, base)
-        _record_step(t.label, t.elapsed)
+        _record_step(t)
 
         original_raster_path = os.path.join('GEOTIFF', f'{base}_idw.tif')
         if not os.path.exists(original_raster_path) and base.endswith('_ma'):
@@ -1965,12 +2120,12 @@ def main():
                     raster_layer_name='Raster (Original)',
                     gradient_sharp=gradient_sharp
                 )
-            _record_step(t.label, t.elapsed)
+            _record_step(t)
             generated.append(map1_file)
             if args.pdf:
                 with StepTimer("PDF: Original Data") as t:
                     html_to_pdf(map1_file, os.path.join(dir_idw_maps, os.path.basename(map1_file).replace('.html', '.pdf')))
-                _record_step(t.label, t.elapsed)
+                _record_step(t)
         else:
             print(f"Original raster not found ({original_raster_path}), skipping Original map.")
 
@@ -1986,7 +2141,7 @@ def main():
                 power=power,
                 method=method
             )
-        _record_step(t.label, t.elapsed)
+        _record_step(t)
 
         print(f"Generating Map: IDW only ({map_idw_file})")
         with StepTimer("Map: IDW only") as t:
@@ -2003,18 +2158,18 @@ def main():
                 color_stats_name=f'Color Stats (IDW)',
                 method=method
             )
-        _record_step(t.label, t.elapsed)
+        _record_step(t)
         generated.append(map_idw_file)
         if args.pdf:
             with StepTimer("PDF: IDW only") as t:
                 html_to_pdf(map_idw_file, os.path.join(dir_idw_maps, os.path.basename(map_idw_file).replace('.html', '.pdf')))
-            _record_step(t.label, t.elapsed)
+            _record_step(t)
 
         print(f"Executing KNN Smoothing + IDW Interpolation — {method_label(method)}")
         with StepTimer(f"KNN smoothing ({method})") as t:
             knn_values = knn_smooth_values(points, values, k=8, power=power,
                                            exclude_self=True, method=method)
-        _record_step(t.label, t.elapsed)
+        _record_step(t)
 
         with StepTimer(f"IDW raster (KNN + IDW, {method})") as t:
             create_idw_raster(
@@ -2026,7 +2181,7 @@ def main():
                 power=power,
                 method=method
             )
-        _record_step(t.label, t.elapsed)
+        _record_step(t)
 
         print(f"Generating Map: KNN + IDW ({map_knn_idw_file})")
         with StepTimer("Map: KNN + IDW") as t:
@@ -2044,20 +2199,27 @@ def main():
                 color_stats_name=f'Color Stats (KNN + IDW)',
                 method=method
             )
-        _record_step(t.label, t.elapsed)
+        _record_step(t)
         generated.append(map_knn_idw_file)
         if args.pdf:
             with StepTimer("PDF: KNN + IDW") as t:
                 html_to_pdf(map_knn_idw_file, os.path.join(dir_knn_idw_maps, os.path.basename(map_knn_idw_file).replace('.html', '.pdf')))
-            _record_step(t.label, t.elapsed)
+            _record_step(t)
 
         dataset_total = time.perf_counter() - dataset_start
-        dataset_timings.append({
+        dataset_rss_end = _RSS_SAMPLER.sample()
+        dataset_rss_peak = _RSS_SAMPLER.release(dataset_watcher)
+        dataset_rss_delta = (dataset_rss_end - dataset_rss_start
+                             if dataset_rss_start is not None and dataset_rss_end is not None
+                             else None)
+        dataset_metrics.append({
             'base': base,
             'total': dataset_total,
-            'steps': step_timings,
+            'rss_delta': dataset_rss_delta,
+            'rss_peak': dataset_rss_peak,
+            'steps': step_metrics,
         })
-        print(f"  Dataset total: {_format_duration(dataset_total)}")
+        print(f"  Dataset total: {_format_metrics(dataset_total, dataset_rss_delta, dataset_rss_peak)}")
 
     total_elapsed = time.perf_counter() - script_start
 
@@ -2076,7 +2238,14 @@ def main():
     with StepTimer("Generate index.html", indent=0) as t:
         generate_index_html(dir_knn_idw_maps, dir_idw_maps)
 
-    _print_timing_summary(total_elapsed, dataset_timings)
+    script_rss_end = _RSS_SAMPLER.sample()
+    # The kernel updates its high-water mark lazily, so a sampled value may top it.
+    observed_peak = _RSS_SAMPLER.release(script_watcher)
+    script_rss_peak = max([p for p in (_peak_rss(), observed_peak) if p is not None],
+                          default=None)
+    _RSS_SAMPLER.stop()
+    _print_metrics_summary(total_elapsed, dataset_metrics,
+                           script_rss_start, script_rss_end, script_rss_peak)
 
 if __name__ == '__main__':
     main()

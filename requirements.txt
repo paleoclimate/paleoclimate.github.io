@@ -8,4 +8,6 @@ scipy>=1.10.0
 playwright>=1.40.0
 # For color classification on raster PNGs
 opencv-python-headless>=4.9.0
+# Optional: RAM (RSS) metrics; on Linux /proc is used when absent
+psutil>=5.9.0
 
