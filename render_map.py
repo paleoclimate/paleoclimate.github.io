@@ -1017,15 +1017,15 @@ def build_color_stats_html(stats, title_label):
     return f"""
     <div style="
         background: rgba(255, 255, 255, 0.9);
-        padding: 4px 6px;
-        border-radius: 3px;
-        box-shadow: 0 0 3px rgba(0,0,0,0.25);
+        padding: 7px 11px;
+        border-radius: 5px;
+        box-shadow: 0 0 5px rgba(0,0,0,0.25);
         font-family: Arial;
-        font-size: 10px;
-        max-width: 180px;
+        font-size: 17.5px;
+        max-width: 315px;
     ">
         <b>{title_label}</b><br>
-        <table style="width:100%; border-collapse: collapse; font-size: 10px;">
+        <table style="width:100%; border-collapse: collapse; font-size: 17.5px;">
             <tr><th align="left">Classe</th><th align="right">Pixels</th><th align="right">%</th></tr>
             <tr><td>Amarelo</td><td align="right">{stats['count_yellow']}</td><td align="right">{stats['pct_yellow']:.2f}%</td></tr>
             <tr><td>Verde</td><td align="right">{stats['count_green']}</td><td align="right">{stats['pct_green']:.2f}%</td></tr>
@@ -1585,18 +1585,18 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                 colorStatsControl.onAdd = function(map) {{
                     var div = L.DomUtil.create('div', 'color-stats-control');
                     div.style.background = 'rgba(255,255,255,0.92)';
-                    div.style.padding = '2px 4px';
-                    div.style.borderRadius = '2px';
-                    div.style.boxShadow = '0 0 2px rgba(0,0,0,0.2)';
+                    div.style.padding = '3.5px 7px';
+                    div.style.borderRadius = '3.5px';
+                    div.style.boxShadow = '0 0 3.5px rgba(0,0,0,0.2)';
                     div.style.fontFamily = 'Arial, sans-serif';
-                    div.style.fontSize = '8px';
+                    div.style.fontSize = '14px';
                     div.style.lineHeight = '1.2';
-                    div.innerHTML = '<table style="border-collapse:collapse;font-size:8px">'
-                        + '<tr><th align="left">Class</th><th align="right" style="padding-left:5px">Pixels</th><th align="right" style="padding-left:3px">%</th></tr>'
-                        + '<tr><td>Dry (Yellow)</td><td align="right" style="padding-left:5px">{cy}</td><td align="right" style="padding-left:3px">{y:.1f}%</td></tr>'
-                        + '<tr><td>Semi-Arid (Green)</td><td align="right" style="padding-left:5px">{cg}</td><td align="right" style="padding-left:3px">{g:.1f}%</td></tr>'
-                        + '<tr><td>Humid (Blue)</td><td align="right" style="padding-left:5px">{cb}</td><td align="right" style="padding-left:3px">{b:.1f}%</td></tr>'
-                        + '<tr><td>Others</td><td align="right" style="padding-left:5px">{co}</td><td align="right" style="padding-left:3px">{o:.1f}%</td></tr>'
+                    div.innerHTML = '<table style="border-collapse:collapse;font-size:14px">'
+                        + '<tr><th align="left">Class</th><th align="right" style="padding-left:9px">Pixels</th><th align="right" style="padding-left:5px">%</th></tr>'
+                        + '<tr><td>Dry (Yellow)</td><td align="right" style="padding-left:9px">{cy}</td><td align="right" style="padding-left:5px">{y:.1f}%</td></tr>'
+                        + '<tr><td>Semi-Arid (Green)</td><td align="right" style="padding-left:9px">{cg}</td><td align="right" style="padding-left:5px">{g:.1f}%</td></tr>'
+                        + '<tr><td>Humid (Blue)</td><td align="right" style="padding-left:9px">{cb}</td><td align="right" style="padding-left:5px">{b:.1f}%</td></tr>'
+                        + '<tr><td>Others</td><td align="right" style="padding-left:9px">{co}</td><td align="right" style="padding-left:5px">{o:.1f}%</td></tr>'
                         + '</table>';
                     return div;
                 }};
@@ -1639,13 +1639,13 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                 line-height: 26px !important;
                 background-size: 26px 52px !important;
             }
-            .leaflet-control-layers { font-size: 8px !important; padding: 2px 4px !important; }
+            .leaflet-control-layers { font-size: 12px !important; padding: 3px 6px !important; }
             .leaflet-control-layers label { margin-bottom: 0 !important; }
             .leaflet-control-layers-overlays label,
             .leaflet-control-layers-base label { padding: 0 !important; line-height: 1.3 !important; }
-            .leaflet-control-layers-separator { margin: 2px 0 !important; }
-            .color-stats-control { font-size: 10px !important; }
-            .color-stats-control table { font-size: 10px !important; }
+            .leaflet-control-layers-separator { margin: 3px 0 !important; }
+            .color-stats-control { font-size: 17.5px !important; }
+            .color-stats-control table { font-size: 17.5px !important; }
         </style>
         {% endmacro %}
     """)
@@ -1912,7 +1912,7 @@ def generate_index_html(dir_knn_idw, dir_idw, output='index.html'):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Paleogeographic Maps Viewer</title>
+<title>PCVS - Paleoclimate Visualization System</title>
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{ font-family: Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; }}
