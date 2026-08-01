@@ -1,0 +1,2 @@
+# Exclude generated HTML maps from GitHub language stats
+*.html linguist-vendored
