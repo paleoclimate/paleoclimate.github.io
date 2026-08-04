@@ -2,17 +2,17 @@ Comparacao Floegel x GeoTIFF - 105 Ma
 
 "Matriz de confusao (linhas=GeoTIFF, colunas=Floegel)"
 ,Seco,Semi-arido,Umido
-Seco,19404,246,5454
-Semi-arido,97809,6369,26182
-Umido,82694,5830,6912
+Seco,36089,594,3439
+Semi-arido,26084,2319,1910
+Umido,134774,7497,41901
 
 Similaridade por classe
 Classe,IoU (%),Recall (%),Precisao (%),Area GeoTIFF (%),Area Floegel (%)
-Seco,9.44,77.29,9.71,10.01,79.68
-Semi-arido,4.67,4.89,51.18,51.96,4.96
-Umido,5.44,7.24,17.93,38.04,15.36
+Seco,17.96,89.95,18.32,15.76,77.35
+Semi-arido,6.04,7.65,22.28,11.91,4.09
+Umido,22.11,22.75,88.68,72.34,18.56
 
 Similaridade geral
-Acuracia global (%),13.03
-Kappa de Cohen,-0.0403
-Pixels comparados,250900
+Acuracia global (%),31.54
+Kappa de Cohen,0.0736
+Pixels comparados,254607

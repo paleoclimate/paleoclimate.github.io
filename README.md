@@ -54,6 +54,26 @@ The script generates:
 - `map_110_ma_knn_idw.html`: KNN + IDW map
 - `raster_overlay.png`: Raster visualization (KNN + IDW)
 
+## Comparison with Floegel reference maps
+
+For **105 Ma** and **115 Ma**, the project can compare generated maps against published Floegel reference maps (spatial similarity: IoU, accuracy, Cohen's kappa).
+
+Workflow (detailed instructions in [`COMPARISON/README.md`](COMPARISON/README.md)):
+
+1. **Generate reference render and GCP picker**
+   ```bash
+   python compare_floegel.py render-reference
+   ```
+
+2. **Mark control points** — open `COMPARISON/gcp_picker.html`, click matching points on Floegel (left) and the GeoTIFF render (right), export `gcp_105.json` and `gcp_115.json`, and save them in `COMPARISON/`.
+
+3. **Run comparison**
+   ```bash
+   python compare_floegel.py compare
+   ```
+
+Results: open `COMPARISON/index_comparison.html` for HTML reports and CSV metrics.
+
 ## Notes
 
 - The map automatically fits to show all data

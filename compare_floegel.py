@@ -2,10 +2,10 @@
 Spatial similarity comparison between Floegel reference paleoclimate maps (JPG,
 no georeference) and the project-generated KNN+IDW GeoTIFFs.
 
-Pipeline (see COMPARISON plan):
-  1. render-reference : rasterize the GeoTIFF into a class-colored PNG on the
-     raster's native grid, draw the coastline on top, and emit a self-contained
-     GCP picker HTML.
+Pipeline (see COMPARISON/README.md for step-by-step usage):
+  1. render-reference : rasterize the GeoTIFF on the raster's native grid using the
+     same color ramp (and gradient_sharp) as the published maps, draw the coastline
+     on top, and emit a self-contained GCP picker HTML.
   2. (manual)         : open COMPARISON/gcp_picker.html, mark matching control
      points on the Floegel image and the reference render, export gcp_<age>.json.
   3. compare          : warp the Floegel image onto the GeoTIFF grid (thin-plate
@@ -25,6 +25,8 @@ import base64
 import csv
 import json
 import os
+import re
+from datetime import datetime
 
 import cv2
 import numpy as np
@@ -48,7 +50,7 @@ INPUT_DIR = os.path.join(COMP_DIR, 'inputs')
 GEOTIFF_DIR = os.path.join(BASE_DIR, 'GENERATED_GEOTIFFS')
 GEOJSON_DIR = os.path.join(BASE_DIR, 'GEOJSON')
 
-GEOTIFF_SUFFIX = 'knn_idw_power4.0_gradient_sharp18.0'
+GEOTIFF_SUFFIX = 'knn_idw_power4.0_gradient_sharp18.0_kdtree'
 
 # Class codes
 DRY, SEMI, HUMID = 1, 2, 3
@@ -62,7 +64,23 @@ CLASS_RGB = {
     HUMID: (7, 152, 219),   # blue
 }
 
+# Value range the raster encodes: 1.0 = Dry, 2.0 = Semi-arid, 3.0 = Humid.
+# Mirrors expected_min/expected_max in render_map.create_raster_overlay.
+VALUE_MIN, VALUE_MAX = 1.0, 3.0
+
+# HSV bins used by render_map.classificar_por_intervalos to count the published
+# colors. Reused here so both sides classify the raster identically.
+HSV_BINS = {
+    DRY: ((20, 50, 50), (34, 255, 255)),
+    SEMI: ((35, 50, 50), (89, 255, 255)),
+    HUMID: ((90, 50, 50), (130, 255, 255)),
+}
+
 AGES = ('115', '105')
+
+# Stamped into exported gcp_<age>.json. Points picked before the reference render was
+# flipped to match the transform are in a mirrored frame and must be re-picked.
+GCP_FRAME = 'north-up-v2'
 
 
 def geotiff_path(age):
@@ -99,6 +117,86 @@ def metrics_path(age):
 
 def report_path(age):
     return os.path.join(COMP_DIR, f'comparison_report_{age}.html')
+
+
+def _mtime(path):
+    return os.path.getmtime(path) if os.path.exists(path) else None
+
+
+def _rel(path):
+    return os.path.relpath(path, BASE_DIR)
+
+
+def reference_is_stale(age):
+    """True when reference_render_<age>.png cannot be trusted as the current raster."""
+    ref_mtime = _mtime(reference_path(age))
+    tif_mtime = _mtime(geotiff_path(age))
+    if ref_mtime is None or tif_mtime is None:
+        return True
+    return ref_mtime < tif_mtime
+
+
+def available_geotiffs():
+    if not os.path.isdir(GEOTIFF_DIR):
+        return []
+    return sorted(n for n in os.listdir(GEOTIFF_DIR) if n.endswith('.tif'))
+
+
+def gradient_sharp():
+    """The gradient_sharp factor the GeoTIFFs were published with.
+
+    Read from GEOTIFF_SUFFIX so it cannot drift from the raster being compared:
+    'knn_idw_power4.0_gradient_sharp18.0_kdtree' -> 18.0.
+    """
+    match = re.search(r'gradient_sharp([0-9.]+)', GEOTIFF_SUFFIX)
+    if not match:
+        raise ValueError(f"Nao achei 'gradient_sharp' no sufixo '{GEOTIFF_SUFFIX}'; "
+                         f"passe --suffix com o sufixo usado no render_map.py.")
+    return float(match.group(1).rstrip('.'))
+
+
+def values_to_rgb(data, sharp):
+    """Replicate render_map.create_raster_overlay's value -> color ramp exactly.
+
+    The published maps stretch the normalized value around the midpoint before
+    coloring, so the visible class boundaries are *not* at 1.5 / 2.5. With
+    gradient_sharp=18 the ramp is nearly binary around 2.0.
+    """
+    valid = np.isfinite(data)
+    filled = np.where(valid, data, VALUE_MIN)
+
+    normalized = (np.clip(filled, VALUE_MIN, VALUE_MAX) - VALUE_MIN) / (VALUE_MAX - VALUE_MIN)
+    normalized = np.clip((normalized - 0.5) * sharp + 0.5, 0, 1)
+
+    r = np.zeros(normalized.shape, dtype=np.float64)
+    g = np.zeros(normalized.shape, dtype=np.float64)
+    b = np.zeros(normalized.shape, dtype=np.float64)
+
+    lo = normalized <= 0.5
+    t1 = normalized[lo] * 2.0
+    r[lo] = 234 - t1 * 224
+    g[lo] = 245 - t1 * 123
+    b[lo] = 29 - t1 * 5
+
+    hi = ~lo
+    t2 = (normalized[hi] - 0.5) * 2.0
+    r[hi] = 10 - t2 * 3
+    g[hi] = 122 + t2 * 30
+    b[hi] = 24 + t2 * 195
+
+    rgb = np.stack([np.clip(c, 0, 255).astype(np.uint8) for c in (r, g, b)], axis=-1)
+    rgb[~valid] = 255
+    return rgb, valid
+
+
+def rgb_to_classes(rgb):
+    """Classify rendered colors with render_map's HSV bins (0 = unclassified)."""
+    hsv = cv2.cvtColor(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2HSV)
+    out = np.zeros(rgb.shape[:2], dtype=np.int32)
+    for code, (lo, hi) in HSV_BINS.items():
+        mask = cv2.inRange(hsv, np.array(lo, dtype=np.uint8), np.array(hi, dtype=np.uint8))
+        out[mask > 0] = code
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -208,41 +306,44 @@ def classify_floegel(rgb_image, prototypes, valid_mask=None):
 # Reference render (GeoTIFF class map + coastline) on native grid
 # ---------------------------------------------------------------------------
 
-def geotiff_classes(age):
-    """Read the GeoTIFF and threshold continuous values into class codes.
+def geotiff_values(age):
+    """Read the GeoTIFF band in the same orientation as its transform.
 
-    Returns (classes (H,W) int, src_meta dict with transform + shape).
-    Bins: <1.5 Dry, [1.5,2.5) Semi-arid, >=2.5 Humid.
+    create_idw_raster fills rows south->north but stamps a north-up transform, and
+    render_map compensates with a flip only when drawing. Flipping on read keeps the
+    raster, the coastline and the published map in one frame.
     """
     with rasterio.open(geotiff_path(age)) as src:
         data = src.read(1).astype(np.float64)
-        transform = src.transform
-        crs = src.crs
-        bounds = src.bounds
-        height, width = data.shape
+        meta = {
+            'transform': src.transform,
+            'crs': src.crs,
+            'bounds': src.bounds,
+            'height': data.shape[0],
+            'width': data.shape[1],
+        }
+    return np.flipud(data), meta
 
-    classes = np.full(data.shape, SEMI, dtype=np.int32)
-    classes[data < 1.5] = DRY
-    classes[(data >= 1.5) & (data < 2.5)] = SEMI
-    classes[data >= 2.5] = HUMID
 
-    meta = {
-        'transform': transform,
-        'crs': crs,
-        'bounds': bounds,
-        'height': height,
-        'width': width,
-    }
+def geotiff_render(age):
+    """Colorize the GeoTIFF exactly like the published map. Returns (rgb, meta)."""
+    data, meta = geotiff_values(age)
+    rgb, _ = values_to_rgb(data, gradient_sharp())
+    return rgb, meta
+
+
+def geotiff_classes(age):
+    """Classify the GeoTIFF into class codes as the published map renders it.
+
+    Returns (classes (H,W) int, src_meta dict with transform + shape). Classes come
+    from the rendered colors, so they honour gradient_sharp instead of naive 1.5/2.5
+    cuts, which would report almost everything as Semi-arid.
+    """
+    data, meta = geotiff_values(age)
+    rgb, valid = values_to_rgb(data, gradient_sharp())
+    classes = rgb_to_classes(rgb)
+    classes[~valid] = 0
     return classes, meta
-
-
-def classes_to_rgb(classes):
-    """Map a class-code array (0..3) to an RGB image. 0 -> white."""
-    h, w = classes.shape
-    rgb = np.full((h, w, 3), 255, dtype=np.uint8)
-    for code, color in CLASS_RGB.items():
-        rgb[classes == code] = color
-    return rgb
 
 
 def _lonlat_to_colrow(transform, lons, lats):
@@ -287,9 +388,12 @@ def draw_coastline(rgb_image, meta, age):
 
 
 def render_reference(age):
-    """Build reference_render_<age>.png = class colors + coastline (native grid)."""
-    classes, meta = geotiff_classes(age)
-    rgb = classes_to_rgb(classes)
+    """Build reference_render_<age>.png = published map colors + coastline.
+
+    Uses the same ramp as the Folium overlay so the GCP picker shows the raster the
+    reader actually sees on the map, not a differently-binned version of it.
+    """
+    rgb, meta = geotiff_render(age)
     rgb = draw_coastline(rgb, meta, age)
     # cv2 writes BGR
     cv2.imwrite(reference_path(age), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
@@ -308,23 +412,52 @@ def _img_to_data_uri(path):
     return f'data:image/png;base64,{b64}'
 
 
-def generate_gcp_picker():
-    """Emit a self-contained COMPARISON/gcp_picker.html with images embedded."""
+def generate_gcp_picker(refresh=True):
+    """Emit a self-contained COMPARISON/gcp_picker.html with images embedded.
+
+    The right-hand image is re-derived from the GeoTIFF whenever the GeoTIFF is newer
+    than the cached render, so the picker can never show an older raster than the one
+    currently in GENERATED_GEOTIFFS. An age whose GeoTIFF is missing is left out
+    entirely instead of falling back to a previous render.
+    """
+    os.makedirs(COMP_DIR, exist_ok=True)
     payload = {}
+    problems = []
     for age in AGES:
         fp = floegel_path(age)
-        rp = reference_path(age)
-        if os.path.exists(fp) and os.path.exists(rp):
-            payload[age] = {
-                'floegel': _img_to_data_uri(fp),
-                'reference': _img_to_data_uri(rp),
-            }
+        tif = geotiff_path(age)
+        if not os.path.exists(fp):
+            problems.append(f'{age} Ma: falta {_rel(fp)}')
+            continue
+        if not os.path.exists(tif):
+            problems.append(f'{age} Ma: falta {_rel(tif)} -- rode render_map.py '
+                            f'para {age} antes de comparar')
+            continue
+        if reference_is_stale(age):
+            if not refresh:
+                problems.append(f'{age} Ma: {_rel(reference_path(age))} esta desatualizado '
+                                f'em relacao ao GeoTIFF (rode render-reference)')
+                continue
+            render_reference(age)
+        payload[age] = {
+            'floegel': _img_to_data_uri(fp),
+            'reference': _img_to_data_uri(reference_path(age)),
+            'source': os.path.basename(tif),
+            'generated': datetime.fromtimestamp(_mtime(tif)).strftime('%Y-%m-%d %H:%M'),
+        }
+
+    for msg in problems:
+        print(f'[pick-gcps] AVISO {msg}')
     if not payload:
-        print("[pick-gcps] No reference renders found; run render-reference first.")
+        print('[pick-gcps] Nenhuma idade pronta para o picker.')
+        for name in available_geotiffs():
+            print(f'            GeoTIFF disponivel: {name}')
         return
 
     data_json = json.dumps(payload)
-    html = _GCP_PICKER_TEMPLATE.replace('__DATA__', data_json)
+    html = (_GCP_PICKER_TEMPLATE
+            .replace('__DATA__', data_json)
+            .replace('__FRAME__', GCP_FRAME))
     out = os.path.join(COMP_DIR, 'gcp_picker.html')
     with open(out, 'w', encoding='utf-8') as f:
         f.write(html)
@@ -352,6 +485,7 @@ _GCP_PICKER_TEMPLATE = r"""<!DOCTYPE html>
   .panes { display: flex; gap: 10px; padding: 10px; align-items: flex-start; }
   .pane { flex: 1; background: #fff; border-radius: 6px; padding: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
   .pane h3 { margin: 4px 6px; font-size: 14px; color: #2c3e50; }
+  .pane h3 span { font-weight: normal; font-size: 11px; color: #7f8c8d; }
   .canvas-wrap { position: relative; width: 100%; overflow: auto; border: 1px solid #ddd; }
   canvas { display: block; width: 100%; height: auto; cursor: crosshair; }
   .side { width: 240px; }
@@ -377,7 +511,7 @@ _GCP_PICKER_TEMPLATE = r"""<!DOCTYPE html>
     <div class="canvas-wrap"><canvas id="cvFloegel"></canvas></div>
   </div>
   <div class="pane">
-    <h3>Render do GeoTIFF (meu mapa)</h3>
+    <h3>Render do GeoTIFF (meu mapa) <span id="refSrc"></span></h3>
     <div class="canvas-wrap"><canvas id="cvRef"></canvas></div>
   </div>
   <div class="pane side">
@@ -388,6 +522,7 @@ _GCP_PICKER_TEMPLATE = r"""<!DOCTYPE html>
 </div>
 <script>
 var DATA = __DATA__;
+var FRAME = "__FRAME__";
 var state = {}; // age -> {pairs:[{floegel:[x,y], ref:[x,y]}], pending:null}
 var imgs = {};  // age -> {floegel:Image, reference:Image}
 var curAge = null;
@@ -437,6 +572,8 @@ function redraw() {
   setupCanvas(cvF, imF); setupCanvas(cvR, imR);
   var cF = cvF.getContext('2d'), cR = cvR.getContext('2d');
   cF.drawImage(imF, 0, 0); cR.drawImage(imR, 0, 0);
+  document.getElementById('refSrc').textContent =
+    '- ' + DATA[curAge].source + ' (' + DATA[curAge].generated + ')';
   var st = state[curAge];
   drawMarkers(cF, st.pairs.map(function(p){return p.floegel;}), '#e74c3c');
   drawMarkers(cR, st.pairs.map(function(p){return p.ref;}), '#e74c3c');
@@ -489,7 +626,7 @@ document.getElementById('clearBtn').addEventListener('click', function() {
 document.getElementById('exportBtn').addEventListener('click', function() {
   var st = state[curAge];
   if (st.pairs.length < 4) { alert('Marque pelo menos 4 pares (6-12 recomendado).'); return; }
-  var out = { age: curAge, points: st.pairs };
+  var out = { age: curAge, frame: FRAME, points: st.pairs };
   var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -524,6 +661,10 @@ def load_gcps(age):
         return None
     with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
+    if data.get('frame') != GCP_FRAME:
+        print(f'[compare] AVISO {_rel(path)} foi marcado num render antigo '
+              f'(espelhado verticalmente). Remarque os pontos no gcp_picker.html '
+              f'atualizado, senao o warp sai errado.')
     pairs = data.get('points', [])
     ref = np.array([p['ref'] for p in pairs], dtype=np.float64)       # (n,2) [x=col,y=row]
     flo = np.array([p['floegel'] for p in pairs], dtype=np.float64)   # (n,2) [x,y]
@@ -864,11 +1005,26 @@ h1{{font-size:22px}} li{{margin:8px 0;font-size:15px}}</style></head>
 def cmd_render_reference(args):
     os.makedirs(COMP_DIR, exist_ok=True)
     ages = [args.age] if args.age else list(AGES)
+    missing = []
     for age in ages:
         if not os.path.exists(geotiff_path(age)):
-            print(f"[render-reference] skip {age}: missing {geotiff_path(age)}")
+            missing.append(age)
+            # Drop the previous render, otherwise the picker would keep showing it.
+            if os.path.exists(reference_path(age)):
+                os.remove(reference_path(age))
+                print(f'[render-reference] {age}: render antigo descartado '
+                      f'({_rel(reference_path(age))})')
             continue
         render_reference(age)
+
+    if missing:
+        print(f"[render-reference] GeoTIFF ausente para {', '.join(missing)} Ma "
+              f"com o sufixo '{GEOTIFF_SUFFIX}'.")
+        for name in available_geotiffs():
+            print(f'                   disponivel: {name}')
+        print('                   Gere-os com: python render_map.py --power 4.0 '
+              '--gradient-sharp 18.0 --kdtree --map ' + ' '.join(missing))
+
     generate_gcp_picker()
 
 
@@ -879,8 +1035,9 @@ def cmd_compare(args):
           f"{[(rgb, CLASS_NAMES[c]) for rgb, c in prototypes]}")
 
     for age in ages:
-        if not os.path.exists(reference_path(age)):
-            print(f"[compare] {age}: reference render missing, generating it...")
+        if reference_is_stale(age):
+            print(f'[compare] {age}: render de referencia ausente ou desatualizado, '
+                  f'regerando a partir de {_rel(geotiff_path(age))}...')
             render_reference(age)
 
         ref_classes, meta = geotiff_classes(age)
@@ -912,8 +1069,12 @@ def cmd_compare(args):
 
 
 def main():
+    global GEOTIFF_SUFFIX
+
     parser = argparse.ArgumentParser(
         description='Compara mapas Floegel (JPG) com GeoTIFFs gerados (similaridade espacial).')
+    parser.add_argument('--suffix', default=GEOTIFF_SUFFIX,
+                        help='Sufixo dos GeoTIFFs a comparar (default: %(default)s)')
     sub = parser.add_subparsers(dest='command', required=True)
 
     p_ref = sub.add_parser('render-reference',
@@ -922,13 +1083,16 @@ def main():
     p_ref.set_defaults(func=cmd_render_reference)
 
     p_pick = sub.add_parser('pick-gcps', help='(Re)gera apenas o gcp_picker.html')
-    p_pick.set_defaults(func=lambda a: generate_gcp_picker())
+    p_pick.add_argument('--no-refresh', action='store_true',
+                        help='Nao re-renderizar a partir do GeoTIFF; apenas avisar se estiver velho')
+    p_pick.set_defaults(func=lambda a: generate_gcp_picker(refresh=not a.no_refresh))
 
     p_cmp = sub.add_parser('compare', help='Warp + metricas + relatorio')
     p_cmp.add_argument('--age', choices=AGES, help='Processar apenas esta idade')
     p_cmp.set_defaults(func=cmd_compare)
 
     args = parser.parse_args()
+    GEOTIFF_SUFFIX = args.suffix
     args.func(args)
 
 
