@@ -12,6 +12,7 @@ import argparse
 import sys
 import threading
 import time
+from collections import Counter, OrderedDict
 import folium
 from folium.raster_layers import ImageOverlay
 from branca.element import MacroElement, Template
@@ -452,6 +453,72 @@ def get_climate_class(props, default=None):
             value = str(value).strip().upper()
             return value or default
     return default
+
+# Stable pie-slice order for multi-climate markers (Humid, Semi-arid, Dry).
+_CLIMATE_DISPLAY_ORDER = ('H', 'S', 'D')
+
+
+def resolve_marker_climates(climates):
+    """Pick climate class(es) that win by prevalence at a coincident location.
+
+    Only the highest count matters. A single clear winner yields one color; a
+    two-way or three-way tie yields two or three colors for a split marker.
+    Less-prevalent climates are ignored.
+    """
+    counts = Counter(c for c in climates if c in _CLIMATE_DISPLAY_ORDER)
+    if not counts:
+        return []
+    max_count = max(counts.values())
+    return [c for c in _CLIMATE_DISPLAY_ORDER if counts.get(c) == max_count]
+
+
+def climate_marker_icon_html(climates_tied, color_map, radius_px=3, weight_px=1,
+                             opacity=0.7):
+    """Build a multi-color DivIcon SVG matching Folium CircleMarker geometry.
+
+    Used only for 2/3-way climate ties. Size/stroke match `CircleMarker` with
+    the same `radius_px` and `weight_px`. Returns `(html, outer_size_px)`.
+    """
+    import math
+
+    n = len(climates_tied)
+    if n < 2:
+        raise ValueError('climate_marker_icon_html is for multi-color ties only')
+
+    # Leaflet draws stroke centered on the path, so outer size is 2*r + weight.
+    outer = 2 * radius_px + weight_px
+    cx = cy = outer / 2.0
+    r = float(radius_px)
+
+    def _pt(deg):
+        rad = math.radians(deg)
+        return cx + r * math.cos(rad), cy + r * math.sin(rad)
+
+    slices = []
+    slice_deg = 360.0 / n
+    for i, climate in enumerate(climates_tied):
+        # Start at top (-90°) so slices match the previous conic-gradient layout.
+        a0 = -90.0 + i * slice_deg
+        a1 = -90.0 + (i + 1) * slice_deg
+        x0, y0 = _pt(a0)
+        x1, y1 = _pt(a1)
+        large = 1 if slice_deg > 180 else 0
+        color = color_map.get(climate, 'gray')
+        slices.append(
+            f'<path d="M {cx:.2f},{cy:.2f} L {x0:.2f},{y0:.2f} '
+            f'A {r:.2f},{r:.2f} 0 {large} 1 {x1:.2f},{y1:.2f} Z" '
+            f'fill="{color}" fill-opacity="{opacity}"/>'
+        )
+    stroke = (
+        f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="{r:.2f}" '
+        f'fill="none" stroke="#000" stroke-width="{weight_px}"/>'
+    )
+    html = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{outer}" height="{outer}" '
+        f'viewBox="0 0 {outer} {outer}" style="display:block;">'
+        + ''.join(slices) + stroke + '</svg>'
+    )
+    return html, outer
 
 def extract_points_and_values(points_data):
     """Extract point coordinates and numeric values from GeoJSON."""
@@ -1258,7 +1325,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     
     # Add points layer with styling based on climate (40% smaller, thinner border)
     point_radius_px = 3   # 60% of original 5
-    point_weight = 1      # thinner black border
+    point_weight = 1      # original CircleMarker stroke
     color_map = {
         'H': '#0798db',    # Blue (Humid)
         'D': '#eaf51d',    # Yellow (Dry)
@@ -1266,7 +1333,6 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     }
     
     # Group features by coordinate so overlapping points share a single marker
-    from collections import OrderedDict
     coord_groups = OrderedDict()
     for feature in points_data.get('features', []):
         geom = feature.get('geometry', {})
@@ -1287,7 +1353,8 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
         ))
         marker_basins_list.append(basins)
 
-        fill_color = color_map.get(climates[0], 'gray')
+        # Prevalence wins; ties (2 or 3) become a split-color marker.
+        marker_climates = resolve_marker_climates(climates)
 
         if len(features) == 1:
             props = features[0].get('properties', {})
@@ -1328,10 +1395,16 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                     f'<b>Age:</b> {age} Ma'
                     f'</div>'
                 )
+            counts = Counter(c for c in climates if c in _CLIMATE_DISPLAY_ORDER)
+            count_bits = [f'{c}:{counts[c]}' for c in _CLIMATE_DISPLAY_ORDER if c in counts]
+            winner_label = '/'.join(marker_climates) if marker_climates else '?'
             popup_html = (
                 f'<div style="font-family: Arial; font-size: 12px; max-height: 300px; overflow-y: auto;">'
                 f'<div style="margin-bottom:4px;font-weight:bold;color:#2c3e50;">'
                 f'{len(features)} points at this location</div>'
+                f'<div style="margin-bottom:6px;font-size:11px;color:#555;">'
+                f'Marker color: {winner_label}'
+                f' ({", ".join(count_bits)})</div>'
                 + ''.join(parts)
                 + '</div>'
             )
@@ -1340,16 +1413,37 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             ))
             tooltip_text = f'{len(features)} points: {", ".join(names)}'
 
-        folium.CircleMarker(
-            location=[lat, lon],
-            radius=point_radius_px,
-            popup=folium.Popup(popup_html, max_width=350),
-            tooltip=tooltip_text,
-            color='black',
-            fillColor=fill_color,
-            fillOpacity=0.7,
-            weight=point_weight
-        ).add_to(points_group)
+        # Solid markers keep the original CircleMarker size/stroke; only ties
+        # use a DivIcon SVG pie with the same radius and weight.
+        if len(marker_climates) <= 1:
+            fill_color = color_map.get(marker_climates[0], 'gray') if marker_climates else 'gray'
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=point_radius_px,
+                popup=folium.Popup(popup_html, max_width=350),
+                tooltip=tooltip_text,
+                color='black',
+                fillColor=fill_color,
+                fillOpacity=0.7,
+                weight=point_weight,
+            ).add_to(points_group)
+        else:
+            icon_html, icon_outer_px = climate_marker_icon_html(
+                marker_climates, color_map,
+                radius_px=point_radius_px, weight_px=point_weight,
+            )
+            icon_anchor = icon_outer_px // 2
+            folium.Marker(
+                location=[lat, lon],
+                popup=folium.Popup(popup_html, max_width=350),
+                tooltip=tooltip_text,
+                icon=folium.DivIcon(
+                    html=icon_html,
+                    icon_size=(icon_outer_px, icon_outer_px),
+                    icon_anchor=(icon_anchor, icon_anchor),
+                    class_name='climate-point-icon',
+                ),
+            ).add_to(points_group)
     
     points_group.add_to(m)
 
@@ -1646,6 +1740,10 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             .leaflet-control-layers-separator { margin: 3px 0 !important; }
             .color-stats-control { font-size: 17.5px !important; }
             .color-stats-control table { font-size: 17.5px !important; }
+            .climate-point-icon {
+                background: transparent !important;
+                border: none !important;
+            }
         </style>
         {% endmacro %}
     """)
