@@ -17,15 +17,20 @@
     padding: 3px 6px; font-size: 12px; border-radius: 3px;
     border: 1px solid #7f8c8d; background: #ecf0f1; min-width: 160px;
   }
-  .toolbar .btn-pdf {
+  .toolbar .btn-pdf,
+  .toolbar .btn-comparison {
     padding: 4px 10px; font-size: 11px; border-radius: 3px;
-    border: 1px solid #7f8c8d; background: #e74c3c; color: #fff;
+    border: 1px solid #7f8c8d; color: #fff;
     cursor: pointer; font-weight: bold; font-family: Arial, sans-serif;
   }
+  .toolbar .btn-pdf { background: #e74c3c; }
   .toolbar .btn-pdf:hover { background: #c0392b; }
   .toolbar .btn-pdf.disabled {
     background: #95a5a6; cursor: default; pointer-events: none; opacity: 0.7;
   }
+  .toolbar .btn-comparison { background: #2980b9; display: none; }
+  .toolbar .btn-comparison:hover { background: #1f6a97; }
+  .toolbar .btn-comparison.visible { display: inline-block; }
   iframe { flex: 1; border: none; width: 100%; }
 </style>
 </head>
@@ -34,11 +39,13 @@
   <label for="mapSelect">Map:</label>
   <select id="mapSelect" onchange="onSelectMap(this.value)"></select>
   <button id="pdfBtn" class="btn-pdf disabled" onclick="downloadPdf()">&#8681; PDF</button>
+  <button id="comparisonBtn" class="btn-comparison" onclick="openComparison()">Comparação</button>
 </div>
 <iframe id="mapFrame"></iframe>
 <script>
-var _maps = [{"path": "GENERATED_KNN_IDW_MAPS/map_65_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "65 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_65_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_70_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "70 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_70_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_75_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "75 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_75_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_80_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "80 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_80_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_85_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "85 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_85_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_90_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "90 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_90_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_95_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "95 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_95_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_100_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "100 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_100_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_105_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "105 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_105_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_110_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "110 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_110_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_115_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "115 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_115_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_120_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "120 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_120_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_125_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "125 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_125_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_130_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "130 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_130_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_135_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "135 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_135_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_140_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "140 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_140_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}, {"path": "GENERATED_KNN_IDW_MAPS/map_145_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "145 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_145_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf"}];
+var _maps = [{"path": "GENERATED_KNN_IDW_MAPS/map_65_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "65 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_65_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_70_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "70 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_70_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_75_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "75 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_75_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_80_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "80 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_80_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_85_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "85 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_85_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_90_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "90 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_90_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_95_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "95 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_95_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_100_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "100 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_100_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_105_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "105 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_105_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": "COMPARISON/comparison_report_105.html"}, {"path": "GENERATED_KNN_IDW_MAPS/map_110_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "110 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_110_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_115_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "115 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_115_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": "COMPARISON/comparison_report_115.html"}, {"path": "GENERATED_KNN_IDW_MAPS/map_120_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "120 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_120_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_125_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "125 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_125_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_130_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "130 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_130_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_135_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "135 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_135_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_140_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "140 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_140_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_145_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "label": "145 Ma (kdtree)", "pdf": "GENERATED_KNN_IDW_MAPS/map_145_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.pdf", "comparison": ""}];
 var _currentPdf = '';
+var _currentComparison = '';
 (function() {
   var select = document.getElementById('mapSelect');
   _maps.forEach(function(m, i) {
@@ -60,6 +67,13 @@ function onSelectMap(idx) {
   } else {
     btn.classList.add('disabled');
   }
+  var cmpBtn = document.getElementById('comparisonBtn');
+  _currentComparison = m.comparison || '';
+  if (_currentComparison) {
+    cmpBtn.classList.add('visible');
+  } else {
+    cmpBtn.classList.remove('visible');
+  }
 }
 
 function downloadPdf() {
@@ -70,6 +84,11 @@ function downloadPdf() {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}
+
+function openComparison() {
+  if (!_currentComparison) return;
+  window.open(_currentComparison, '_blank');
 }
 </script>
 </body>

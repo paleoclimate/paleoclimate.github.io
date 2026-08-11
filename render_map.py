@@ -1993,10 +1993,12 @@ def generate_index_html(dir_knn_idw, dir_idw, output='index.html'):
             label = f"{age} Ma ({method})" if method else f"{age} Ma"
             pdf_name = h.replace('.html', '.pdf')
             pdf_path = f"{folder}/{pdf_name}"
+            comparison_path = f"COMPARISON/comparison_report_{age}.html"
             maps_list.append({
                 'path': f"{folder}/{h}",
                 'label': label,
-                'pdf': pdf_path if os.path.isfile(pdf_path) else ''
+                'pdf': pdf_path if os.path.isfile(pdf_path) else '',
+                'comparison': comparison_path if os.path.isfile(comparison_path) else '',
             })
 
     if not maps_list:
@@ -2024,15 +2026,20 @@ def generate_index_html(dir_knn_idw, dir_idw, output='index.html'):
     padding: 3px 6px; font-size: 12px; border-radius: 3px;
     border: 1px solid #7f8c8d; background: #ecf0f1; min-width: 160px;
   }}
-  .toolbar .btn-pdf {{
+  .toolbar .btn-pdf,
+  .toolbar .btn-comparison {{
     padding: 4px 10px; font-size: 11px; border-radius: 3px;
-    border: 1px solid #7f8c8d; background: #e74c3c; color: #fff;
+    border: 1px solid #7f8c8d; color: #fff;
     cursor: pointer; font-weight: bold; font-family: Arial, sans-serif;
   }}
+  .toolbar .btn-pdf {{ background: #e74c3c; }}
   .toolbar .btn-pdf:hover {{ background: #c0392b; }}
   .toolbar .btn-pdf.disabled {{
     background: #95a5a6; cursor: default; pointer-events: none; opacity: 0.7;
   }}
+  .toolbar .btn-comparison {{ background: #2980b9; display: none; }}
+  .toolbar .btn-comparison:hover {{ background: #1f6a97; }}
+  .toolbar .btn-comparison.visible {{ display: inline-block; }}
   iframe {{ flex: 1; border: none; width: 100%; }}
 </style>
 </head>
@@ -2041,11 +2048,13 @@ def generate_index_html(dir_knn_idw, dir_idw, output='index.html'):
   <label for="mapSelect">Map:</label>
   <select id="mapSelect" onchange="onSelectMap(this.value)"></select>
   <button id="pdfBtn" class="btn-pdf disabled" onclick="downloadPdf()">&#8681; PDF</button>
+  <button id="comparisonBtn" class="btn-comparison" onclick="openComparison()">Comparação</button>
 </div>
 <iframe id="mapFrame"></iframe>
 <script>
 var _maps = {maps_json};
 var _currentPdf = '';
+var _currentComparison = '';
 (function() {{
   var select = document.getElementById('mapSelect');
   _maps.forEach(function(m, i) {{
@@ -2067,6 +2076,13 @@ function onSelectMap(idx) {{
   }} else {{
     btn.classList.add('disabled');
   }}
+  var cmpBtn = document.getElementById('comparisonBtn');
+  _currentComparison = m.comparison || '';
+  if (_currentComparison) {{
+    cmpBtn.classList.add('visible');
+  }} else {{
+    cmpBtn.classList.remove('visible');
+  }}
 }}
 
 function downloadPdf() {{
@@ -2077,6 +2093,11 @@ function downloadPdf() {{
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}}
+
+function openComparison() {{
+  if (!_currentComparison) return;
+  window.open(_currentComparison, '_blank');
 }}
 </script>
 </body>
