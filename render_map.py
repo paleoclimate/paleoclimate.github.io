@@ -95,6 +95,25 @@ def _hex_to_rgb(value):
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
 
 
+def climate_values_to_rgb(data, valid_mask, gradient_sharp, expected_min=1.0,
+                          expected_max=3.0):
+    """Map climate values in [1, 3] onto the published Dry/Semi-arid/Humid ramp."""
+    data_clamped = np.clip(data, expected_min, expected_max)
+    normalized = (data_clamped - expected_min) / (expected_max - expected_min)
+    normalized = np.clip((normalized - 0.5) * gradient_sharp + 0.5, 0, 1)
+
+    dry = np.array(_hex_to_rgb(CLIMATE_COLORS['D']), dtype=np.float32)
+    semi = np.array(_hex_to_rgb(CLIMATE_COLORS['S']), dtype=np.float32)
+    humid = np.array(_hex_to_rgb(CLIMATE_COLORS['H']), dtype=np.float32)
+
+    rgb = np.zeros(data.shape + (3,), dtype=np.float32)
+    lower = (normalized <= 0.5) & valid_mask
+    upper = (normalized > 0.5) & valid_mask
+    rgb[lower] = dry + (semi - dry) * (normalized[lower] * 2.0)[:, None]
+    rgb[upper] = semi + (humid - semi) * ((normalized[upper] - 0.5) * 2.0)[:, None]
+    return np.clip(rgb, 0, 255).astype(np.uint8)
+
+
 def _feather_edges(alpha):
     """Fade an alpha channel out towards the border of the raster.
 
@@ -1042,34 +1061,8 @@ def create_raster_overlay(geotiff_path, map_obj, raster_img_path='raster_overlay
             
             print(f"Data range (cleaned): {data_min} to {data_max}")
             print(f"Valid pixels: {np.sum(valid_mask)} / {data.size}")
-            
-            # Colour the surface with the climate palette: Dry at 1.0,
-            # Semi-arid at 2.0, Humid at 3.0, interpolated in between.
-            expected_min = 1.0  # Dry
-            expected_max = 3.0  # Humid
 
-            # Clamp to the expected range so colours stay comparable between ages
-            data_clamped = np.clip(data, expected_min, expected_max)
-            normalized = (data_clamped - expected_min) / (expected_max - expected_min)
-
-            # Stretch toward the extremes, narrowing the transition bands
-            normalized = np.clip((normalized - 0.5) * gradient_sharp + 0.5, 0, 1)
-
-            dry = np.array(_hex_to_rgb(CLIMATE_COLORS['D']), dtype=np.float32)
-            semi = np.array(_hex_to_rgb(CLIMATE_COLORS['S']), dtype=np.float32)
-            humid = np.array(_hex_to_rgb(CLIMATE_COLORS['H']), dtype=np.float32)
-
-            rgb = np.zeros(data.shape + (3,), dtype=np.float32)
-
-            # Dry -> Semi-arid over the lower half, Semi-arid -> Humid over the upper
-            lower = (normalized <= 0.5) & valid_mask
-            upper = (normalized > 0.5) & valid_mask
-            t_lower = (normalized[lower] * 2.0)[:, None]
-            t_upper = ((normalized[upper] - 0.5) * 2.0)[:, None]
-            rgb[lower] = dry + (semi - dry) * t_lower
-            rgb[upper] = semi + (humid - semi) * t_upper
-
-            rgb_uint8 = np.clip(rgb, 0, 255).astype(np.uint8)
+            rgb_uint8 = climate_values_to_rgb(data, valid_mask, gradient_sharp)
             # Pixels without data stay fully transparent instead of turning black
             alpha = np.where(valid_mask, 255.0, 0.0).astype(np.float32)
             rgba = np.dstack([rgb_uint8, _feather_edges(alpha)])
@@ -1497,35 +1490,9 @@ MAP_THEME_CSS = """
         /* Data points: a white halo lifts the climate colour off the raster */
         path.pcvs-point { filter: __MARKER_HALO__; }
 
-        /* Caption. Only exports show it; on screen the viewer header carries
-           the same text, so the map stays free of overlays. */
-        .pcvs-title {
-            display: none;
-            position: absolute;
-            top: 12px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 850;
-            padding: 7px 15px 8px;
-            text-align: center;
-            pointer-events: none;
-            white-space: nowrap;
-        }
-        .pcvs-exporting .pcvs-title { display: block; }
-        .pcvs-title-age {
-            font-size: 17px;
-            font-weight: 650;
-            letter-spacing: -0.01em;
-            line-height: 1.1;
-        }
-        .pcvs-title-sub {
-            margin-top: 2px;
-            font-size: 9.5px;
-            font-weight: 600;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: var(--pcvs-muted);
-        }
+        /* Caption kept out of the map and out of exports: the viewer header
+           already names the age and the interpolation. */
+        .pcvs-title { display: none !important; }
 
         /* Colour statistics */
         .color-stats-control { padding: 9px 11px 10px; }
@@ -1635,22 +1602,6 @@ def _script_macro(map_obj, body, **substitutions):
     map_obj.add_child(macro)
 
 
-def _add_title_card(map_obj, age_label, subtitle):
-    """Add the age / method caption that exported PDFs are titled with."""
-    _script_macro(map_obj, """
-        (function() {
-            var map = {{ this._parent.get_name() }};
-            var info = __INFO__;
-            var card = L.DomUtil.create('div', 'pcvs-panel pcvs-title');
-            card.innerHTML =
-                '<div class="pcvs-title-age"></div><div class="pcvs-title-sub"></div>';
-            card.querySelector('.pcvs-title-age').textContent = info.age;
-            card.querySelector('.pcvs-title-sub').textContent = info.sub;
-            map.getContainer().appendChild(card);
-        })();
-    """, info=json.dumps({'age': age_label, 'sub': subtitle}, ensure_ascii=False))
-
-
 def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
     """Expose ``window.PCVS``, the export entry point used by page and toolbar.
 
@@ -1682,6 +1633,19 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                 return b ? L.latLngBounds(b) : map.getBounds();
             }
 
+            /* When a raster-only export keeps the coverage panel, the fitted
+               region has to sit to the right of it or the panel covers the
+               surface. Measured from the live control so an unchecked layer
+               costs no extra margin. */
+            function colorStatsPadPx() {
+                var panel = map.getContainer().querySelector('.color-stats-control');
+                if (!panel) return 0;
+                var mapRect = map.getContainer().getBoundingClientRect();
+                var panelRect = panel.getBoundingClientRect();
+                if (panelRect.width < 1) return 0;
+                return Math.max(0, Math.ceil(panelRect.right - mapRect.left) + 12);
+            }
+
             /* Page geometry follows the region being exported, so the map fills
                it completely instead of sitting inside white margins. */
             function exportSize(scope) {
@@ -1698,7 +1662,8 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                     height = Math.round(CFG.maxWidth / ratio);
                     width = CFG.maxWidth;
                 }
-                return {width: width, height: height};
+                var padLeft = (scope === 'raster') ? colorStatsPadPx() : 0;
+                return {width: width + padLeft, height: height, padLeft: padLeft};
             }
 
             var saved = null;
@@ -1750,7 +1715,15 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                     container.style.height = size.height + 'px';
                 }
                 map.invalidateSize({animate: false, pan: false});
-                map.fitBounds(boundsFor(scope), {animate: false, padding: [0, 0]});
+                var fitOpts = {animate: false, padding: [0, 0]};
+                if (scope === 'raster' && size.padLeft) {
+                    fitOpts = {
+                        animate: false,
+                        paddingTopLeft: [size.padLeft, 0],
+                        paddingBottomRight: [0, 0]
+                    };
+                }
+                map.fitBounds(boundsFor(scope), fitOpts);
                 return size;
             }
 
@@ -1890,8 +1863,8 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                method=None, age_label='', map_subtitle=''):
     """Create a Folium map with points, coastlines, and optional raster.
 
-    ``age_label`` and ``map_subtitle`` caption the map; when ``method`` is given
-    the neighbor search backend is appended to the subtitle.
+    ``age_label`` and ``map_subtitle`` are accepted for caller compatibility;
+    the viewer header is what names the reconstruction.
     """
     
     # Calculate combined bounds
@@ -2392,7 +2365,6 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                 ('D', 'Dry', stats['count_yellow'], stats['pct_yellow']),
                 ('S', 'Semi-arid', stats['count_green'], stats['pct_green']),
                 ('H', 'Humid', stats['count_blue'], stats['pct_blue']),
-                (None, 'Other', stats['nao_classificado'], stats['pct_nao_classificado']),
             ]
             body = ''.join(
                 '<tr>'
@@ -2447,14 +2419,6 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     # Add coordinate graticule (always visible, 30° intervals)
     _add_graticule(m, interval=30)
 
-    # Caption for exported PDFs only: on screen the same information lives in
-    # the viewer's header, which leaves the map itself uncovered.
-    if age_label:
-        subtitle = map_subtitle or 'Paleogeographic reconstruction'
-        if method:
-            subtitle = f'{subtitle} · {method_label(method)}'
-        _add_title_card(m, age_label, subtitle)
-
     # Fit bounds to raster extent (tightest framing around interpolated area)
     raster_bounds = None
     if geotiff_path and os.path.exists(geotiff_path):
@@ -2474,12 +2438,31 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
         export_basename=os.path.splitext(os.path.basename(output_file))[0],
     )
     
-    # Save map
     print(f"Saving map to {output_file}...")
-    m.save(output_file)
+    _save_map(m, output_file)
     print(f"Map saved successfully! Open {output_file} in your browser.")
     
     return output_file
+
+
+def _save_map(map_obj, output_file, attempts=8):
+    """Write a Folium map, retrying when Windows has the destination locked."""
+    tmp = output_file + '.tmp'
+    last_err = None
+    for attempt in range(attempts):
+        try:
+            map_obj.save(tmp)
+            os.replace(tmp, output_file)
+            return
+        except OSError as err:
+            last_err = err
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
+            time.sleep(0.45 * (attempt + 1))
+    raise last_err
 
 PDF_SCOPES = ('full', 'raster')
 
@@ -2560,7 +2543,10 @@ class PdfExporter:
             # The page is sized to the region being exported, so the map fills
             # it with no margins to trim afterwards.
             size = page.evaluate('scope => window.PCVS.exportSize(scope)', scope)
-            page.set_viewport_size(size)
+            page.set_viewport_size({
+                'width': int(size['width']),
+                'height': int(size['height']),
+            })
             page.evaluate(
                 'scope => window.PCVS.beginExport({scope: scope, resize: false})',
                 scope,

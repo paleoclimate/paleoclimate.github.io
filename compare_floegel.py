@@ -38,6 +38,9 @@ from scipy.spatial.distance import cdist
 from render_map import (
     apply_paleo_reference_frame_correction,
     load_geojson,
+    CLIMATE_COLORS,
+    _hex_to_rgb,
+    climate_values_to_rgb,
 )
 
 # ---------------------------------------------------------------------------
@@ -59,9 +62,9 @@ CLASS_ORDER = [DRY, SEMI, HUMID]
 
 # Class render colors (RGB), matching render_map.py's climate palette.
 CLASS_RGB = {
-    DRY: (234, 245, 29),    # yellow
-    SEMI: (10, 122, 24),    # dark green
-    HUMID: (7, 152, 219),   # blue
+    DRY: _hex_to_rgb(CLIMATE_COLORS['D']),
+    SEMI: _hex_to_rgb(CLIMATE_COLORS['S']),
+    HUMID: _hex_to_rgb(CLIMATE_COLORS['H']),
 }
 
 # Value range the raster encodes: 1.0 = Dry, 2.0 = Semi-arid, 3.0 = Humid.
@@ -156,35 +159,10 @@ def gradient_sharp():
 
 
 def values_to_rgb(data, sharp):
-    """Replicate render_map.create_raster_overlay's value -> color ramp exactly.
-
-    The published maps stretch the normalized value around the midpoint before
-    coloring, so the visible class boundaries are *not* at 1.5 / 2.5. With
-    gradient_sharp=18 the ramp is nearly binary around 2.0.
-    """
+    """Color the GeoTIFF with the same ramp the published maps use."""
     valid = np.isfinite(data)
-    filled = np.where(valid, data, VALUE_MIN)
-
-    normalized = (np.clip(filled, VALUE_MIN, VALUE_MAX) - VALUE_MIN) / (VALUE_MAX - VALUE_MIN)
-    normalized = np.clip((normalized - 0.5) * sharp + 0.5, 0, 1)
-
-    r = np.zeros(normalized.shape, dtype=np.float64)
-    g = np.zeros(normalized.shape, dtype=np.float64)
-    b = np.zeros(normalized.shape, dtype=np.float64)
-
-    lo = normalized <= 0.5
-    t1 = normalized[lo] * 2.0
-    r[lo] = 234 - t1 * 224
-    g[lo] = 245 - t1 * 123
-    b[lo] = 29 - t1 * 5
-
-    hi = ~lo
-    t2 = (normalized[hi] - 0.5) * 2.0
-    r[hi] = 10 - t2 * 3
-    g[hi] = 122 + t2 * 30
-    b[hi] = 24 + t2 * 195
-
-    rgb = np.stack([np.clip(c, 0, 255).astype(np.uint8) for c in (r, g, b)], axis=-1)
+    rgb = climate_values_to_rgb(data, valid, sharp)
+    rgb = rgb.copy()
     rgb[~valid] = 255
     return rgb, valid
 
