@@ -22,7 +22,7 @@
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
                  "Helvetica Neue", Arial, sans-serif;
     color: var(--ink);
-    background: #e9eef3;
+    background: #eef0f2;
     display: flex;
     flex-direction: column;
     -webkit-font-smoothing: antialiased;
@@ -32,25 +32,52 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 18px;
-    padding: 9px 16px;
+    gap: 14px;
+    padding: 8px 16px;
     background: linear-gradient(180deg, var(--header-1), var(--header-2));
     color: var(--on-header);
     border-bottom: 1px solid rgba(255, 255, 255, 0.07);
     box-shadow: 0 1px 12px rgba(8, 15, 30, 0.28);
-    z-index: 5;
+    position: relative;
+    z-index: 20;
+    min-width: 0;
   }
 
-  .brand { display: flex; align-items: baseline; gap: 9px; flex: none; }
+  .brand {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    flex: none;
+    min-width: 0;
+  }
   .brand-mark {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     letter-spacing: 0.14em;
+    line-height: 1.1;
   }
-  .brand-sub {
+  .brand-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    min-width: 0;
+    max-width: 280px;
+  }
+  .context-age {
+    font-size: 11px;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+    flex: none;
+  }
+  .context-sub {
     font-size: 10.5px;
     color: var(--on-header-dim);
-    letter-spacing: 0.02em;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .divider {
@@ -69,7 +96,7 @@
     color: var(--on-header-dim);
   }
 
-  select, .btn, .toggle {
+  .btn, .toggle, .combo-btn {
     font: inherit;
     font-size: 12px;
     color: var(--on-header);
@@ -78,9 +105,92 @@
     border-radius: 8px;
     transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
   }
-  select { padding: 5px 9px; min-width: 108px; cursor: pointer; }
-  select:hover { background: rgba(255, 255, 255, 0.12); }
-  select option { color: #0f172a; background: #fff; }
+
+  /* Age picker. A native select renders its list with the platform's own
+     styling, which has nothing to do with the rest of the interface. */
+  .combo { position: relative; flex: none; }
+  .combo-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 9px;
+    min-width: 96px;
+    padding: 5px 9px;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+  }
+  .combo-btn:hover { background: rgba(255, 255, 255, 0.13); }
+  .combo.open .combo-btn {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.28);
+  }
+  .combo-caret {
+    width: 0;
+    height: 0;
+    border-left: 3.5px solid transparent;
+    border-right: 3.5px solid transparent;
+    border-top: 4px solid var(--on-header-dim);
+    transition: transform 0.18s ease;
+  }
+  .combo.open .combo-caret { transform: rotate(180deg); }
+
+  .combo-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 7px);
+    left: 0;
+    min-width: 128px;
+    max-height: 46vh;
+    overflow-y: auto;
+    padding: 5px;
+    background: rgba(255, 255, 255, 0.97);
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    border-radius: var(--radius);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06),
+                0 18px 40px -16px rgba(15, 23, 42, 0.45);
+    -webkit-backdrop-filter: saturate(160%) blur(10px);
+    backdrop-filter: saturate(160%) blur(10px);
+    z-index: 50;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(15, 23, 42, 0.2) transparent;
+  }
+  .combo.open .combo-menu { display: block; }
+  .combo-menu::-webkit-scrollbar { width: 9px; }
+  .combo-menu::-webkit-scrollbar-track { background: transparent; }
+  .combo-menu::-webkit-scrollbar-thumb {
+    background: rgba(15, 23, 42, 0.18);
+    background-clip: content-box;
+    border: 3px solid transparent;
+    border-radius: 999px;
+  }
+  .combo-menu::-webkit-scrollbar-thumb:hover {
+    background: rgba(15, 23, 42, 0.32);
+    background-clip: content-box;
+  }
+  .combo-opt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 9px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.12s ease;
+  }
+  .combo-opt:hover { background: rgba(15, 23, 42, 0.06); }
+  .combo-opt[aria-selected="true"] { color: var(--accent); font-weight: 650; }
+  .combo-opt-mark {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0;
+    flex: none;
+  }
+  .combo-opt[aria-selected="true"] .combo-opt-mark { opacity: 1; }
 
   .btn {
     display: inline-flex;
@@ -101,8 +211,31 @@
     color: #fff;
   }
   .btn-primary:hover:not(:disabled) { background: #2a62d4; }
-  .btn.busy { pointer-events: none; opacity: 0.75; }
+  .btn.busy { pointer-events: none; }
   :focus-visible { outline: 2px solid #7aa5ff; outline-offset: 2px; }
+
+  /* The export button keeps its label and swaps only the icon, so the header
+     layout does not shift while a PDF renders. */
+  .btn-ico {
+    display: inline-flex;
+    width: 13px;
+    height: 13px;
+    flex: none;
+  }
+  .btn-ico svg { width: 13px; height: 13px; display: block; }
+  .btn-ico i { display: none; }
+  .btn.busy .btn-ico svg { display: none; }
+  .btn.busy .btn-ico i {
+    display: block;
+    width: 13px;
+    height: 13px;
+    box-sizing: border-box;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* Age timeline */
   .timeline {
@@ -144,14 +277,14 @@
 
   /* Map area */
   main { position: relative; flex: 1; min-height: 0; }
-  iframe { width: 100%; height: 100%; border: none; display: block; }
+  iframe { width: 100%; height: 100%; border: none; display: block; overflow: hidden; }
 
   .loader {
     position: absolute;
     inset: 0;
     display: grid;
     place-items: center;
-    background: #e9eef3;
+    background: #eef0f2;
     color: var(--muted);
     font-size: 12px;
     letter-spacing: 0.06em;
@@ -194,10 +327,15 @@
   .toast.on { opacity: 1; transform: translate(-50%, 0); }
   .toast.error { background: #7f1d1d; }
 
+  @media (max-width: 1200px) {
+    .timeline-hint { display: none; }
+    .context-sub { display: none; }
+    .brand-meta { max-width: none; }
+  }
   @media (max-width: 900px) {
     header { flex-wrap: wrap; gap: 10px 14px; }
-    .brand-sub, .divider { display: none; }
-    .timeline { order: 10; flex-basis: 100%; }
+    .divider { display: none; }
+    .timeline { order: 10; flex-basis: 100%; max-width: none; }
   }
 </style>
 </head>
@@ -205,14 +343,25 @@
 <header>
   <div class="brand">
     <span class="brand-mark">PCVS</span>
-    <span class="brand-sub">Paleoclimate Visualization System</span>
+    <span class="brand-meta">
+      <span class="context-age" id="ctxAge"></span>
+      <span class="context-sub" id="ctxSub"></span>
+    </span>
   </div>
 
   <div class="divider"></div>
 
   <div class="field">
     <span class="field-label">Age</span>
-    <select id="mapSelect" aria-label="Reconstruction age"></select>
+    <div class="combo" id="ageCombo">
+      <button type="button" class="combo-btn" id="ageBtn" aria-haspopup="listbox"
+              aria-expanded="false" aria-label="Reconstruction age">
+        <span id="ageBtnLabel"></span>
+        <span class="combo-caret" aria-hidden="true"></span>
+      </button>
+      <div class="combo-menu" id="ageMenu" role="listbox"
+           aria-label="Reconstruction age"></div>
+    </div>
   </div>
 
   <div class="timeline">
@@ -235,7 +384,13 @@
     <span>Raster area only</span>
   </label>
   <button class="btn btn-primary" id="pdfBtn" title="Export the map as shown (P)">
-    <span>&#8681;</span><span id="pdfLabel">PDF</span>
+    <span class="btn-ico" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 2v8M4.6 6.9 8 10.3l3.4-3.4M2.8 13.4h10.4"/>
+      </svg>
+      <i></i>
+    </span><span>PDF</span>
   </button>
   <button class="btn" id="comparisonBtn" hidden>Comparison</button>
 </header>
@@ -247,17 +402,21 @@
 </main>
 
 <script>
-var MAPS = [{"path": "GENERATED_KNN_IDW_MAPS/map_65_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 65, "label": "65 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_65_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_65_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_70_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 70, "label": "70 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_70_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_70_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_75_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 75, "label": "75 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_75_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_75_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_80_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 80, "label": "80 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_80_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_80_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_85_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 85, "label": "85 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_85_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_85_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_90_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 90, "label": "90 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_90_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_90_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_95_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 95, "label": "95 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_95_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_95_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_100_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 100, "label": "100 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_100_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_100_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_105_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 105, "label": "105 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_105_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_105_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": "COMPARISON/comparison_report_105.html"}, {"path": "GENERATED_KNN_IDW_MAPS/map_110_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 110, "label": "110 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_110_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_110_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_115_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 115, "label": "115 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_115_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_115_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": "COMPARISON/comparison_report_115.html"}, {"path": "GENERATED_KNN_IDW_MAPS/map_120_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 120, "label": "120 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_120_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_120_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_125_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 125, "label": "125 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_125_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_125_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_130_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 130, "label": "130 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_130_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_130_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_135_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 135, "label": "135 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_135_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_135_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_140_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 140, "label": "140 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_140_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_140_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_145_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 145, "label": "145 Ma", "method": "kdtree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_145_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_145_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}];
+var MAPS = [{"path": "GENERATED_KNN_IDW_MAPS/map_65_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 65, "label": "65 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_65_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_65_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_70_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 70, "label": "70 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_70_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_70_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_75_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 75, "label": "75 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_75_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_75_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_80_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 80, "label": "80 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_80_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_80_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_85_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 85, "label": "85 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_85_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_85_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_90_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 90, "label": "90 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_90_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_90_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_95_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 95, "label": "95 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_95_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_95_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_100_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 100, "label": "100 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_100_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_100_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_105_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 105, "label": "105 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_105_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_105_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": "COMPARISON/comparison_report_105.html"}, {"path": "GENERATED_KNN_IDW_MAPS/map_110_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 110, "label": "110 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_110_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_110_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_115_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 115, "label": "115 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_115_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_115_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": "COMPARISON/comparison_report_115.html"}, {"path": "GENERATED_KNN_IDW_MAPS/map_120_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 120, "label": "120 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_120_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_120_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_125_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 125, "label": "125 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_125_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_125_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_130_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 130, "label": "130 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_130_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_130_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_135_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 135, "label": "135 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_135_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_135_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_140_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 140, "label": "140 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_140_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_140_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_KNN_IDW_MAPS/map_145_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.html", "age": 145, "label": "145 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_KNN_IDW_MAPS/map_145_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_full.pdf", "raster": "GENERATED_KNN_IDW_MAPS/map_145_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree_raster.pdf"}, "comparison": ""}];
 var STORAGE_KEY = 'pcvs:age';
 
 var frame = document.getElementById('mapFrame');
-var select = document.getElementById('mapSelect');
+var combo = document.getElementById('ageCombo');
+var comboBtn = document.getElementById('ageBtn');
+var comboLabel = document.getElementById('ageBtnLabel');
+var comboMenu = document.getElementById('ageMenu');
+var ctxAge = document.getElementById('ctxAge');
+var ctxSub = document.getElementById('ctxSub');
 var range = document.getElementById('ageRange');
 var ticks = document.getElementById('ageTicks');
 var prevBtn = document.getElementById('prevBtn');
 var nextBtn = document.getElementById('nextBtn');
 var pdfBtn = document.getElementById('pdfBtn');
-var pdfLabel = document.getElementById('pdfLabel');
 var rasterOnly = document.getElementById('rasterOnly');
 var comparisonBtn = document.getElementById('comparisonBtn');
 var loader = document.getElementById('loader');
@@ -265,6 +424,7 @@ var toast = document.getElementById('toast');
 
 var current = 0;
 var toastTimer = null;
+var ageOptions = [];
 
 function showToast(message, isError) {
   toast.textContent = message;
@@ -299,10 +459,29 @@ function clamp(idx) {
    timeline stays responsive instead of loading every age it passes over. */
 function preview(idx) {
   var at = clamp(idx);
-  select.value = String(at);
+  var entry = MAPS[at];
+  comboLabel.textContent = entry.label;
+  ctxAge.textContent = entry.label;
+  ctxSub.textContent = entry.caption || '';
+  ctxSub.title = entry.caption || '';
+  ageOptions.forEach(function(option, i) {
+    option.setAttribute('aria-selected', i === at ? 'true' : 'false');
+  });
   range.value = String(at);
   prevBtn.disabled = at === 0;
   nextBtn.disabled = at === MAPS.length - 1;
+}
+
+function openCombo() {
+  combo.classList.add('open');
+  comboBtn.setAttribute('aria-expanded', 'true');
+  var selected = ageOptions[current];
+  if (selected) selected.scrollIntoView({block: 'nearest'});
+}
+
+function closeCombo() {
+  combo.classList.remove('open');
+  comboBtn.setAttribute('aria-expanded', 'false');
 }
 
 function selectMap(idx, pushHash) {
@@ -391,7 +570,6 @@ function exportPdf() {
   if (pdfBtn.disabled || pdfBtn.classList.contains('busy')) return;
   var scope = currentScope();
   pdfBtn.classList.add('busy');
-  pdfLabel.textContent = 'Exporting…';
   showToast('Rendering the ' + (scope === 'raster' ? 'raster area' : 'entire map') + '…');
 
   exportLive(scope).then(function() {
@@ -403,15 +581,22 @@ function exportPdf() {
     }
   }).finally(function() {
     pdfBtn.classList.remove('busy');
-    pdfLabel.textContent = 'PDF';
   });
 }
 
 MAPS.forEach(function(entry, i) {
-  var option = document.createElement('option');
-  option.value = String(i);
-  option.textContent = entry.label;
-  select.appendChild(option);
+  var option = document.createElement('div');
+  option.className = 'combo-opt';
+  option.setAttribute('role', 'option');
+  option.setAttribute('aria-selected', 'false');
+  option.innerHTML = '<span class="combo-opt-mark"></span>';
+  option.appendChild(document.createTextNode(entry.label));
+  option.addEventListener('click', function() {
+    closeCombo();
+    selectMap(i);
+  });
+  comboMenu.appendChild(option);
+  ageOptions.push(option);
 
   var tick = document.createElement('option');
   tick.value = String(i);
@@ -420,7 +605,27 @@ MAPS.forEach(function(entry, i) {
 });
 range.max = String(MAPS.length - 1);
 
-select.addEventListener('change', function() { selectMap(Number(this.value)); });
+comboBtn.addEventListener('click', function(event) {
+  event.stopPropagation();
+  if (combo.classList.contains('open')) closeCombo(); else openCombo();
+});
+comboBtn.addEventListener('keydown', function(event) {
+  if (event.key === 'Escape') {
+    closeCombo();
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!combo.classList.contains('open')) {
+      openCombo();
+      return;
+    }
+    selectMap(current + (event.key === 'ArrowDown' ? 1 : -1));
+    ageOptions[current].scrollIntoView({block: 'nearest'});
+  }
+});
+document.addEventListener('click', function(event) {
+  if (!combo.contains(event.target)) closeCombo();
+});
 range.addEventListener('input', function() { preview(Number(this.value)); });
 range.addEventListener('change', function() { selectMap(Number(this.value)); });
 prevBtn.addEventListener('click', function() { selectMap(current - 1); });
