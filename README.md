@@ -7,7 +7,10 @@ This project renders a paleogeographic map from 110 million years ago using Foli
 - **GeoJSON Point Data**: Displays geological formation points with climate classification
 - **Coastline Data**: Shows reconstructed coastlines from 110 Ma
 - **GeoTIFF Raster**: Displays interpolated surface data (KNN + IDW)
-- **Interactive Map**: Full-featured Folium map with layer controls, fullscreen, and measurement tools
+- **Interactive Map**: Full-featured Folium map with layer controls, basin filter, legend,
+  fullscreen, and measurement tools
+- **PDF Export**: Downloads the map exactly as it is on screen, framed either on the whole
+  map or on the interpolated raster area
 
 ## Installation
 
@@ -29,14 +32,16 @@ This will create an HTML file named `map_110_ma.html` that you can open in any w
 
 ## Data Layers
 
-- **Data Points (110 Ma)**: Geological formation points colored by climate:
+- **Data points**: Geological formation points colored by climate:
   - Blue: Humid (H)
   - Yellow: Dry (D)
   - Green: Semi-arid (S)
   
-- **Coastlines (110 Ma)**: Reconstructed coastline polylines
+- **Coastlines**: Reconstructed coastline polylines
 
-- **Raster (KNN + IDW)**: Interpolated surface data from the GeoTIFF file
+- **Raster**: Interpolated surface data from the GeoTIFF file
+
+- **Color stats**: Share of the raster area falling in each climate class
 
 ## Files
 
@@ -48,11 +53,33 @@ This will create an HTML file named `map_110_ma.html` that you can open in any w
 
 ## Output
 
-The script generates:
-- `map_110_ma.html`: Interactive map file (KNN + IDW)
-- `map_110_ma_original.html`: Original raster map
-- `map_110_ma_knn_idw.html`: KNN + IDW map
-- `raster_overlay.png`: Raster visualization (KNN + IDW)
+For every dataset in `GEOJSON/`, the script generates:
+
+- `GENERATED_GEOTIFFS/`: interpolated GeoTIFFs (IDW-only and KNN + IDW)
+- `GENERATED_IDW_MAPS/`, `GENERATED_KNN_IDW_MAPS/`: one interactive `map_<age>_*.html`
+  per map, plus its raster overlay PNG
+- `index.html`: the viewer that switches between ages
+
+## PDF export
+
+The map can be exported at two scopes:
+
+- **entire map**: the full extent of the data, coastlines included
+- **raster area**: only the region covered by the interpolated (coloured) raster
+
+Both are framed so the map fills the page edge to edge; the page itself is sized to the
+aspect ratio of the exported region, so there are no white margins to trim.
+
+In the viewer, tick **Raster area only** next to the **PDF** button to choose the scope. The
+export is rendered in the browser from the map as it currently stands, so whatever is checked
+under **Layers** (Raster, Coastlines, Data points, Color stats) and whichever basins are
+filtered in is exactly what the PDF shows. Interactive controls (zoom, layer switcher, basin
+filter, measure) are left out.
+
+Running with `--pdf` pre-renders both scopes next to each map HTML
+(`map_<age>_*_full.pdf` and `map_<age>_*_raster.pdf`). Those are vector PDFs, and they are
+what the viewer falls back to when it cannot render in the browser, for instance when
+`index.html` is opened straight from disk instead of being served over HTTP.
 
 ## Comparison with Floegel reference maps
 
@@ -76,8 +103,9 @@ Results: open `COMPARISON/index_comparison.html` for HTML reports and CSV metric
 
 ## Notes
 
-- The map automatically fits to show all data
+- The map opens framed on the interpolated raster area
 - You can toggle layers on/off using the layer control
+- The basin filter narrows the data points down to selected basins
 - Use the fullscreen button for better viewing
 - The measurement tool allows you to measure distances on the map
-
+- In the viewer, the arrow keys step through ages and `P` exports a PDF

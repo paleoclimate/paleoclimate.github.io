@@ -49,6 +49,42 @@ METHOD_LABELS = {
     METHOD_KDTREE: 'k-d Tree',
 }
 
+# Layer names. They are shown in the map's layer control and are also the
+# handles the PDF exporter uses to keep a layer visible or hidden, so both
+# sides must agree on the exact strings.
+LAYER_RASTER = 'Raster'
+LAYER_COASTLINES = 'Coastlines'
+LAYER_POINTS = 'Data points'
+LAYER_COLOR_STATS = 'Color stats'
+
+# Climate classification palette, shared by markers, raster ramp and legend.
+CLIMATE_COLORS = {
+    'H': '#0798db',   # Humid — blue
+    'S': '#0a7a18',   # Semi-arid — dark green
+    'D': '#eaf51d',   # Dry — yellow
+}
+CLIMATE_LABELS = {
+    'H': 'Humid',
+    'S': 'Semi-arid',
+    'D': 'Dry',
+}
+
+# Neutral canvas behind the coastlines and the interpolated raster.
+MAP_BACKGROUND = '#e9eef3'
+
+# Page geometry for exported PDFs. The page is sized to the aspect ratio of the
+# exported region so the map fills it edge to edge with no white borders.
+PDF_BASE_HEIGHT_PX = 900
+PDF_MIN_WIDTH_PX = 640
+PDF_MAX_WIDTH_PX = 2200
+
+# Client-side export dependencies, loaded on demand from a CDN. html-to-image
+# rasterises through the browser's own renderer (an SVG foreignObject), which is
+# why it reproduces Leaflet's transformed vector panes; html2canvas reimplements
+# layout and drops the markers and coastlines in the wrong place.
+HTML_TO_IMAGE_URL = 'https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js'
+JSPDF_URL = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js'
+
 
 def method_label(method):
     """Human-readable name of a neighbor-search backend."""
@@ -457,6 +493,17 @@ def get_climate_class(props, default=None):
 # Stable pie-slice order for multi-climate markers (Humid, Semi-arid, Dry).
 _CLIMATE_DISPLAY_ORDER = ('H', 'S', 'D')
 
+# Fill opacity shared by solid CircleMarkers and split (multi-climate) icons.
+MARKER_FILL_OPACITY = 0.85
+
+
+def _climate_name(code):
+    """Spell out a climate code for popups, e.g. 'H' -> 'Humid (H)'."""
+    if not code or code == 'N/A':
+        return 'N/A'
+    label = CLIMATE_LABELS.get(code)
+    return f'{label} ({code})' if label else code
+
 
 def resolve_marker_climates(climates):
     """Pick climate class(es) that win by prevalence at a coincident location.
@@ -473,7 +520,7 @@ def resolve_marker_climates(climates):
 
 
 def climate_marker_icon_html(climates_tied, color_map, radius_px=3, weight_px=1,
-                             opacity=0.7):
+                             opacity=MARKER_FILL_OPACITY):
     """Build a multi-color DivIcon SVG matching Folium CircleMarker geometry.
 
     Used only for 2/3-way climate ties. Size/stroke match `CircleMarker` with
@@ -503,7 +550,7 @@ def climate_marker_icon_html(climates_tied, color_map, radius_px=3, weight_px=1,
         x0, y0 = _pt(a0)
         x1, y1 = _pt(a1)
         large = 1 if slice_deg > 180 else 0
-        color = color_map.get(climate, 'gray')
+        color = color_map.get(climate, '#94a3b8')
         slices.append(
             f'<path d="M {cx:.2f},{cy:.2f} L {x0:.2f},{y0:.2f} '
             f'A {r:.2f},{r:.2f} 0 {large} 1 {x1:.2f},{y1:.2f} Z" '
@@ -511,7 +558,7 @@ def climate_marker_icon_html(climates_tied, color_map, radius_px=3, weight_px=1,
         )
     stroke = (
         f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="{r:.2f}" '
-        f'fill="none" stroke="#000" stroke-width="{weight_px}"/>'
+        f'fill="none" stroke="#111827" stroke-width="{weight_px}"/>'
     )
     html = (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{outer}" height="{outer}" '
@@ -1077,32 +1124,6 @@ def classificar_por_intervalos(caminho_imagem):
     }
 
 
-def build_color_stats_html(stats, title_label):
-    if stats is None:
-        return "<div style='font-family: Arial; font-size: 11px;'>Sem estatísticas disponíveis.</div>"
-
-    return f"""
-    <div style="
-        background: rgba(255, 255, 255, 0.9);
-        padding: 7px 11px;
-        border-radius: 5px;
-        box-shadow: 0 0 5px rgba(0,0,0,0.25);
-        font-family: Arial;
-        font-size: 17.5px;
-        max-width: 315px;
-    ">
-        <b>{title_label}</b><br>
-        <table style="width:100%; border-collapse: collapse; font-size: 17.5px;">
-            <tr><th align="left">Classe</th><th align="right">Pixels</th><th align="right">%</th></tr>
-            <tr><td>Amarelo</td><td align="right">{stats['count_yellow']}</td><td align="right">{stats['pct_yellow']:.2f}%</td></tr>
-            <tr><td>Verde</td><td align="right">{stats['count_green']}</td><td align="right">{stats['pct_green']:.2f}%</td></tr>
-            <tr><td>Azul</td><td align="right">{stats['count_blue']}</td><td align="right">{stats['pct_blue']:.2f}%</td></tr>
-            <tr><td>Outros</td><td align="right">{stats['nao_classificado']}</td><td align="right">{stats['pct_nao_classificado']:.2f}%</td></tr>
-        </table>
-    </div>
-    """
-
-
 def _add_graticule(map_obj, interval=30):
     """Add a lat/lon graticule with labels that reposition at viewport edges on pan/zoom.
 
@@ -1234,16 +1255,576 @@ def _add_graticule(map_obj, interval=30):
     map_obj.add_child(macro)
 
 
+# ---------------------------------------------------------------------------
+# Map look and feel
+# ---------------------------------------------------------------------------
+
+# Every floating panel on the map (layer control, legend, basin filter, colour
+# stats, title card) shares these tokens so the map reads as one interface.
+MAP_THEME_CSS = """
+    {% macro header(this, kwargs) %}
+    <style>
+        .leaflet-container {
+            --pcvs-ink: #0f172a;
+            --pcvs-muted: #64748b;
+            --pcvs-line: rgba(15, 23, 42, 0.10);
+            --pcvs-surface: rgba(255, 255, 255, 0.94);
+            --pcvs-shadow: 0 1px 2px rgba(15, 23, 42, 0.06),
+                           0 10px 26px -12px rgba(15, 23, 42, 0.35);
+            --pcvs-radius: 10px;
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+                         Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-size: 12px;
+            color: var(--pcvs-ink);
+            background: __BACKGROUND__;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .pcvs-panel {
+            background: var(--pcvs-surface);
+            -webkit-backdrop-filter: saturate(160%) blur(10px);
+            backdrop-filter: saturate(160%) blur(10px);
+            border: 1px solid var(--pcvs-line);
+            border-radius: var(--pcvs-radius);
+            box-shadow: var(--pcvs-shadow);
+            color: var(--pcvs-ink);
+        }
+        .pcvs-panel-title {
+            font-size: 9.5px;
+            font-weight: 700;
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
+            color: var(--pcvs-muted);
+        }
+
+        /* Zoom / fullscreen / measure buttons */
+        .leaflet-bar,
+        .leaflet-control-layers,
+        .leaflet-control-measure {
+            border: 1px solid var(--pcvs-line) !important;
+            border-radius: var(--pcvs-radius) !important;
+            box-shadow: var(--pcvs-shadow) !important;
+            background: var(--pcvs-surface) !important;
+            -webkit-backdrop-filter: saturate(160%) blur(10px);
+            backdrop-filter: saturate(160%) blur(10px);
+            overflow: hidden;
+        }
+        /* Only the background colour is themed: the shorthand would wipe out
+           the sprite the fullscreen plugin draws its icon with. Sizes stay at
+           26px for the same reason. */
+        .leaflet-bar a,
+        .leaflet-bar a:hover {
+            width: 26px;
+            height: 26px;
+            line-height: 26px;
+            color: var(--pcvs-ink);
+            background-color: transparent;
+            border-bottom: 1px solid var(--pcvs-line);
+            font-size: 15px;
+            font-weight: 500;
+            transition: background-color 0.15s ease;
+        }
+        .leaflet-bar a:last-child { border-bottom: none; }
+        .leaflet-bar a:hover { background-color: rgba(15, 23, 42, 0.06); }
+        .leaflet-bar a.leaflet-disabled { color: #cbd5e1; background-color: transparent; }
+
+        /* Layer control */
+        .leaflet-control-layers-expanded {
+            padding: 9px 11px 9px 10px !important;
+            min-width: 148px;
+        }
+        .leaflet-control-layers-list::before {
+            content: "Layers";
+            display: block;
+            margin-bottom: 7px;
+            font-size: 9.5px;
+            font-weight: 700;
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
+            color: var(--pcvs-muted);
+        }
+        .leaflet-control-layers-overlays label {
+            display: block;
+            margin: 0 -5px !important;
+            padding: 3px 5px !important;
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.35 !important;
+            cursor: pointer;
+            transition: background 0.12s ease;
+        }
+        .leaflet-control-layers-overlays label:hover { background: rgba(15, 23, 42, 0.05); }
+        .leaflet-control-layers-selector {
+            margin: 0 7px 0 0 !important;
+            accent-color: #2f6fed;
+            vertical-align: -2px;
+        }
+        .leaflet-control-layers-separator { display: none !important; }
+
+        /* Popups and tooltips */
+        .leaflet-popup-content-wrapper {
+            border-radius: var(--pcvs-radius);
+            box-shadow: var(--pcvs-shadow);
+            border: 1px solid var(--pcvs-line);
+        }
+        .leaflet-popup-content {
+            margin: 11px 13px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .leaflet-tooltip {
+            border: 1px solid var(--pcvs-line);
+            border-radius: 7px;
+            box-shadow: var(--pcvs-shadow);
+            font-size: 11px;
+            padding: 3px 8px;
+            color: var(--pcvs-ink);
+            background: var(--pcvs-surface);
+        }
+        .leaflet-control-attribution {
+            background: rgba(255, 255, 255, 0.78) !important;
+            border-radius: 6px 0 0 0;
+            font-size: 10px;
+            color: var(--pcvs-muted);
+        }
+
+        /* Popup body used by data point markers */
+        .pcvs-popup { font-size: 12px; color: var(--pcvs-ink); }
+        .pcvs-popup-head {
+            font-size: 9.5px;
+            font-weight: 700;
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
+            color: var(--pcvs-muted);
+            margin-bottom: 6px;
+        }
+        .pcvs-popup-name { font-weight: 600; margin-bottom: 4px; }
+        .pcvs-popup dl {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 2px 10px;
+            margin: 0;
+        }
+        .pcvs-popup dt { color: var(--pcvs-muted); }
+        .pcvs-popup dd { margin: 0; }
+        .pcvs-popup-item + .pcvs-popup-item {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--pcvs-line);
+        }
+        .pcvs-dot {
+            display: inline-block;
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            border: 1px solid rgba(15, 23, 42, 0.55);
+            vertical-align: -1px;
+            margin-right: 5px;
+        }
+        .pcvs-scroll { max-height: 260px; overflow-y: auto; }
+
+        /* Title card */
+        .pcvs-title {
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 850;
+            padding: 7px 15px 8px;
+            text-align: center;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+        .pcvs-title-age {
+            font-size: 17px;
+            font-weight: 650;
+            letter-spacing: -0.01em;
+            line-height: 1.1;
+        }
+        .pcvs-title-sub {
+            margin-top: 2px;
+            font-size: 9.5px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--pcvs-muted);
+        }
+
+        /* Legend */
+        .pcvs-legend { padding: 9px 11px 10px; line-height: 1.4; }
+        .pcvs-legend-row {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            margin-top: 5px;
+            font-size: 11.5px;
+        }
+        .pcvs-legend-swatch {
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            border: 1px solid rgba(15, 23, 42, 0.75);
+            flex: none;
+        }
+        .pcvs-legend-ramp {
+            margin-top: 9px;
+            padding-top: 8px;
+            border-top: 1px solid var(--pcvs-line);
+        }
+        .pcvs-legend-bar {
+            height: 8px;
+            border-radius: 4px;
+            margin: 5px 0 3px;
+            border: 1px solid var(--pcvs-line);
+        }
+        .pcvs-legend-scale {
+            display: flex;
+            justify-content: space-between;
+            font-size: 9.5px;
+            color: var(--pcvs-muted);
+        }
+
+        /* Colour statistics */
+        .color-stats-control { padding: 9px 11px 10px; }
+        .color-stats-control table {
+            border-collapse: collapse;
+            font-size: 11.5px;
+            font-variant-numeric: tabular-nums;
+            margin-top: 5px;
+        }
+        .color-stats-control th {
+            font-size: 9.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--pcvs-muted);
+            padding-bottom: 3px;
+        }
+        .color-stats-control td { padding: 1px 0; }
+        .color-stats-control td + td,
+        .color-stats-control th + th { padding-left: 14px; }
+
+        .climate-point-icon { background: transparent !important; border: none !important; }
+
+        /* Everything that only exists for on-screen interaction is stripped
+           from exports, so a PDF shows the map and its read-only panels only. */
+        .pcvs-exporting .leaflet-control-zoom,
+        .pcvs-exporting .leaflet-control-layers,
+        .pcvs-exporting .leaflet-control-attribution,
+        .pcvs-exporting .leaflet-control-fullscreen,
+        .pcvs-exporting .leaflet-control-measure,
+        .pcvs-exporting .leaflet-measure-resultpopup,
+        .pcvs-exporting .basin-filter-control,
+        .pcvs-exporting .leaflet-popup,
+        .pcvs-exporting .leaflet-tooltip {
+            display: none !important;
+        }
+        /* Backdrop blur cannot be rasterised, and renderers that try leave an
+           opaque block behind each panel. The panels are near-opaque anyway. */
+        .pcvs-exporting .pcvs-panel,
+        .pcvs-exporting .leaflet-tooltip,
+        .pcvs-exporting .leaflet-control-layers,
+        .pcvs-exporting .leaflet-bar {
+            -webkit-backdrop-filter: none !important;
+            backdrop-filter: none !important;
+            background: #ffffff !important;
+        }
+    </style>
+    {% endmacro %}
+"""
+
+
+def _add_map_theme(map_obj):
+    """Apply the shared visual language to the Leaflet controls of a map."""
+    theme = MacroElement()
+    theme._template = Template(MAP_THEME_CSS.replace('__BACKGROUND__', MAP_BACKGROUND))
+    map_obj.get_root().add_child(theme)
+
+
+def _script_macro(map_obj, body, **substitutions):
+    """Attach a ``{% macro script %}`` block to a map, filling in placeholders.
+
+    ``body`` is plain JavaScript containing ``__NAME__`` placeholders, replaced
+    by the matching keyword argument. Values are inserted verbatim, so callers
+    pass JSON. Keeping the JavaScript free of Python formatting syntax avoids
+    escaping every brace and percent sign it contains.
+    """
+    for name, value in substitutions.items():
+        body = body.replace(f'__{name.upper()}__', value)
+    macro = MacroElement()
+    macro._template = Template(
+        '{% macro script(this, kwargs) %}\n' + body + '\n{% endmacro %}'
+    )
+    map_obj.add_child(macro)
+
+
+def _add_title_card(map_obj, age_label, subtitle):
+    """Add the age / method caption shown at the top of the map and in exports."""
+    _script_macro(map_obj, """
+        (function() {
+            var map = {{ this._parent.get_name() }};
+            var info = __INFO__;
+            var card = L.DomUtil.create('div', 'pcvs-panel pcvs-title');
+            card.innerHTML =
+                '<div class="pcvs-title-age"></div><div class="pcvs-title-sub"></div>';
+            card.querySelector('.pcvs-title-age').textContent = info.age;
+            card.querySelector('.pcvs-title-sub').textContent = info.sub;
+            map.getContainer().appendChild(card);
+        })();
+    """, info=json.dumps({'age': age_label, 'sub': subtitle}, ensure_ascii=False))
+
+
+def _add_legend(map_obj):
+    """Add the climate legend: marker colours plus the raster colour ramp."""
+    rows = ''.join(
+        '<div class="pcvs-legend-row">'
+        f'<span class="pcvs-legend-swatch" style="background:{CLIMATE_COLORS[c]}"></span>'
+        f'<span>{CLIMATE_LABELS[c]}</span></div>'
+        for c in _CLIMATE_DISPLAY_ORDER
+    )
+    ramp = (
+        f"linear-gradient(90deg, {CLIMATE_COLORS['D']} 0%, "
+        f"{CLIMATE_COLORS['S']} 50%, {CLIMATE_COLORS['H']} 100%)"
+    )
+    html = (
+        '<div class="pcvs-panel-title">Climate</div>'
+        + rows
+        + '<div class="pcvs-legend-ramp">'
+        + '<div class="pcvs-panel-title">Interpolated surface</div>'
+        + f'<div class="pcvs-legend-bar" style="background:{ramp}"></div>'
+        + '<div class="pcvs-legend-scale"><span>Dry</span><span>Semi-arid</span>'
+          '<span>Humid</span></div>'
+        + '</div>'
+    )
+    _script_macro(map_obj, """
+        (function() {
+            var map = {{ this._parent.get_name() }};
+            var legend = L.control({position: 'bottomright'});
+            legend.onAdd = function() {
+                var div = L.DomUtil.create('div', 'pcvs-panel pcvs-legend');
+                div.innerHTML = __HTML__;
+                L.DomEvent.disableClickPropagation(div);
+                return div;
+            };
+            legend.addTo(map);
+        })();
+    """, html=json.dumps(html, ensure_ascii=False))
+
+
+def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
+    """Expose ``window.PCVS``, the export entry point used by page and toolbar.
+
+    The API frames the map on a chosen region, strips interactive chrome and
+    renders what is left. It is what both export paths go through: the browser
+    (client side, so the current layer toggles are honoured) and Playwright
+    (which reuses the framing, then prints the page to a vector PDF).
+    """
+    config = json.dumps({
+        'rasterBounds': raster_bounds,
+        'fullBounds': full_bounds,
+        'basename': export_basename,
+        'baseHeight': PDF_BASE_HEIGHT_PX,
+        'minWidth': PDF_MIN_WIDTH_PX,
+        'maxWidth': PDF_MAX_WIDTH_PX,
+        'background': MAP_BACKGROUND,
+        'htmlToImage': HTML_TO_IMAGE_URL,
+        'jspdf': JSPDF_URL,
+    }, ensure_ascii=False)
+
+    _script_macro(map_obj, """
+        (function() {
+            var map = {{ this._parent.get_name() }};
+            var CFG = __CONFIG__;
+
+            function boundsFor(scope) {
+                var b = (scope === 'raster' && CFG.rasterBounds) ? CFG.rasterBounds
+                                                                 : CFG.fullBounds;
+                return b ? L.latLngBounds(b) : map.getBounds();
+            }
+
+            /* Page geometry follows the region being exported, so the map fills
+               it completely instead of sitting inside white margins. */
+            function exportSize(scope) {
+                var b = boundsFor(scope);
+                var lonSpan = Math.abs(b.getEast() - b.getWest());
+                var latSpan = Math.abs(b.getNorth() - b.getSouth());
+                var ratio = (latSpan > 0) ? lonSpan / latSpan : 1.4;
+                var height = CFG.baseHeight;
+                var width = Math.round(height * ratio);
+                if (width < CFG.minWidth) {
+                    height = Math.round(CFG.minWidth / ratio);
+                    width = CFG.minWidth;
+                } else if (width > CFG.maxWidth) {
+                    height = Math.round(CFG.maxWidth / ratio);
+                    width = CFG.maxWidth;
+                }
+                return {width: width, height: height};
+            }
+
+            var saved = null;
+
+            function beginExport(options) {
+                options = options || {};
+                var scope = options.scope === 'raster' ? 'raster' : 'full';
+                var container = map.getContainer();
+                var size = exportSize(scope);
+                saved = {
+                    center: map.getCenter(),
+                    zoom: map.getZoom(),
+                    cssText: container.style.cssText,
+                    bodyOverflow: document.body.style.overflow
+                };
+                document.documentElement.classList.add('pcvs-exporting');
+                map.closePopup();
+                if (options.resize !== false) {
+                    document.body.style.overflow = 'hidden';
+                    container.style.position = 'absolute';
+                    container.style.top = '0';
+                    container.style.left = '0';
+                    container.style.width = size.width + 'px';
+                    container.style.height = size.height + 'px';
+                }
+                map.invalidateSize({animate: false, pan: false});
+                map.fitBounds(boundsFor(scope), {animate: false, padding: [0, 0]});
+                return size;
+            }
+
+            function endExport() {
+                document.documentElement.classList.remove('pcvs-exporting');
+                if (!saved) return;
+                var container = map.getContainer();
+                container.style.cssText = saved.cssText;
+                document.body.style.overflow = saved.bodyOverflow;
+                map.invalidateSize({animate: false, pan: false});
+                map.setView(saved.center, saved.zoom, {animate: false});
+                saved = null;
+            }
+
+            function settled() {
+                return new Promise(function(resolve) {
+                    map.whenReady(function() {
+                        var pending = Array.prototype.filter.call(
+                            map.getContainer().querySelectorAll('img'),
+                            function(img) { return !img.complete; }
+                        ).map(function(img) {
+                            return new Promise(function(done) {
+                                img.addEventListener('load', done, {once: true});
+                                img.addEventListener('error', done, {once: true});
+                            });
+                        });
+                        Promise.all(pending).then(function() {
+                            requestAnimationFrame(function() {
+                                setTimeout(resolve, 350);
+                            });
+                        });
+                    });
+                });
+            }
+
+            function loadScript(src) {
+                return new Promise(function(resolve, reject) {
+                    var s = document.createElement('script');
+                    s.src = src;
+                    s.onload = resolve;
+                    s.onerror = function() { reject(new Error('Failed to load ' + src)); };
+                    document.head.appendChild(s);
+                });
+            }
+
+            function libs() {
+                var chain = Promise.resolve();
+                if (!window.htmlToImage) {
+                    chain = chain.then(function() { return loadScript(CFG.htmlToImage); });
+                }
+                if (!window.jspdf) {
+                    chain = chain.then(function() { return loadScript(CFG.jspdf); });
+                }
+                return chain;
+            }
+
+            /* Renders the map exactly as it currently stands — including which
+               layers the user left checked — and returns the PDF bytes. */
+            function exportPdf(options) {
+                options = options || {};
+                var scope = options.scope === 'raster' ? 'raster' : 'full';
+                var size;
+                return libs().then(function() {
+                    size = beginExport({scope: scope});
+                    return settled();
+                }).then(function() {
+                    var ratio = Math.min(3, Math.max(1.5, 3600 / size.width));
+                    return window.htmlToImage.toCanvas(map.getContainer(), {
+                        backgroundColor: CFG.background,
+                        width: size.width,
+                        height: size.height,
+                        pixelRatio: ratio,
+                        cacheBust: false
+                    });
+                }).then(function(canvas) {
+                    endExport();
+                    var ptW = size.width * 0.75;
+                    var ptH = size.height * 0.75;
+                    var doc = new window.jspdf.jsPDF({
+                        orientation: ptW >= ptH ? 'landscape' : 'portrait',
+                        unit: 'pt',
+                        format: [ptW, ptH],
+                        compress: true
+                    });
+                    doc.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG',
+                                 0, 0, ptW, ptH, undefined, 'FAST');
+                    return {
+                        buffer: doc.output('arraybuffer'),
+                        filename: CFG.basename + '_' + scope + '.pdf'
+                    };
+                }).catch(function(err) {
+                    endExport();
+                    throw err;
+                });
+            }
+
+            window.PCVS = {
+                exportSize: exportSize,
+                beginExport: beginExport,
+                endExport: endExport,
+                settled: settled,
+                exportPdf: exportPdf,
+                basename: CFG.basename
+            };
+
+            /* The shell page drives exports from its toolbar over postMessage,
+               which keeps working even when the iframe is not same-origin. */
+            window.addEventListener('message', function(event) {
+                var data = event.data;
+                if (!data || data.pcvs !== 'export' || !event.source) return;
+                exportPdf({scope: data.scope}).then(function(result) {
+                    event.source.postMessage({
+                        pcvs: 'export-result',
+                        id: data.id,
+                        filename: result.filename,
+                        buffer: result.buffer
+                    }, '*', [result.buffer]);
+                }).catch(function(err) {
+                    event.source.postMessage({
+                        pcvs: 'export-error',
+                        id: data.id,
+                        message: String(err && err.message || err)
+                    }, '*');
+                });
+            });
+        })();
+    """, config=config)
+
+
 def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.html', 
-               map_title='Paleogeographic Map - 110 Ma', raster_img_path='raster_overlay.png',
-               point_values_override=None, raster_layer_name='Raster (IDW Interpolation)',
+               raster_img_path='raster_overlay.png',
+               point_values_override=None, raster_layer_name=LAYER_RASTER,
                gradient_sharp=2.5,
                color_stats_img_path=None, color_stats_name=None,
-               method=None):
+               method=None, age_label='', map_subtitle=''):
     """Create a Folium map with points, coastlines, and optional raster.
 
-    When ``method`` is given, a badge identifying the neighbor search backend
-    (brute force or k-d tree) is stamped on the map.
+    ``age_label`` and ``map_subtitle`` caption the map; when ``method`` is given
+    the neighbor search backend is appended to the subtitle.
     """
     
     # Calculate combined bounds
@@ -1271,25 +1852,36 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     if bounds_list:
         all_lats = [b[0][0] for b in bounds_list] + [b[1][0] for b in bounds_list]
         all_lons = [b[0][1] for b in bounds_list] + [b[1][1] for b in bounds_list]
+        full_bounds = [[min(all_lats), min(all_lons)], [max(all_lats), max(all_lons)]]
         center_lat = (min(all_lats) + max(all_lats)) / 2
         center_lon = (min(all_lons) + max(all_lons)) / 2
     else:
         # Default center (South America region)
+        full_bounds = None
         center_lat = -20
         center_lon = -20
     
-    # Create base map
+    # Create base map. Fractional zoom (zoomSnap 0) makes fit_bounds land on the
+    # exact framing asked for; with the default integer snapping, datasets whose
+    # extent falls just over a power-of-two boundary drop a whole zoom level and
+    # come out framed very differently from their neighbours.
     print("Creating Folium map...")
     m = folium.Map(
         location=[center_lat, center_lon],
         zoom_start=3,
         tiles=None,
-        crs='EPSG4326'
+        crs='EPSG4326',
+        zoom_snap=0,
+        zoom_delta=0.5,
     )
     
     # Add OpenStreetMap hidden and without checkbox in LayerControl
     folium.TileLayer('OpenStreetMap', name='OpenStreetMap', overlay=True, 
                      control=False, show=False).add_to(m)
+
+    # Added early so it sits with the zoom buttons in the top-left stack,
+    # above the basin filter panel.
+    plugins.Fullscreen().add_to(m)
     
     # Add GeoTIFF raster overlay if provided
     if geotiff_path and os.path.exists(geotiff_path):
@@ -1310,11 +1902,11 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     # Add coastline layer
     folium.GeoJson(
         coastline_data,
-        name='Coastlines (110 Ma)',
+        name=LAYER_COASTLINES,
         style_function=lambda feature: {
-            'color': 'black',
-            'weight': 2,
-            'opacity': 0.8
+            'color': '#1b2733',
+            'weight': 1.1,
+            'opacity': 0.85
         },
         tooltip=folium.GeoJsonTooltip(
             fields=['NAME', 'TIME'],
@@ -1323,14 +1915,12 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
         )
     ).add_to(m)
     
-    # Add points layer with styling based on climate (40% smaller, thinner border)
-    point_radius_px = 3   # 60% of original 5
-    point_weight = 1      # original CircleMarker stroke
-    color_map = {
-        'H': '#0798db',    # Blue (Humid)
-        'D': '#eaf51d',    # Yellow (Dry)
-        'S': '#0a7a18'     # Dark Green (Semi-arid)
-    }
+    # Marker geometry. The same radius and stroke drive solid CircleMarkers, the
+    # multi-climate SVG icons and the PDF export, so every point on the map is
+    # the same size no matter how many records share the location.
+    point_radius_px = 3
+    point_weight = 1
+    color_map = CLIMATE_COLORS
     
     # Group features by coordinate so overlapping points share a single marker
     coord_groups = OrderedDict()
@@ -1343,7 +1933,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                 coord_groups.setdefault(key, []).append(feature)
     
     # Create a FeatureGroup for points
-    points_group = folium.FeatureGroup(name='Data Points (110 Ma)')
+    points_group = folium.FeatureGroup(name=LAYER_POINTS)
     
     marker_basins_list = []
     for (lon, lat), features in coord_groups.items():
@@ -1364,49 +1954,48 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             climate_val = get_climate_class(props) or 'N/A'
             age = props.get('TIME') or 'N/A'
             popup_html = (
-                '<div style="font-family: Arial; font-size: 12px;">'
-                f'<b>Formation:</b> {formation}<br>'
-                f'<b>Basin:</b> {basin}<br>'
-                f'<b>Country:</b> {country}<br>'
-                f'<b>Climate:</b> {climate_val}<br>'
-                f'<b>Age:</b> {age} Ma'
-                '</div>'
+                '<div class="pcvs-popup">'
+                '<div class="pcvs-popup-head">Data point</div>'
+                f'<div class="pcvs-popup-name">{formation}</div>'
+                '<dl>'
+                f'<dt>Basin</dt><dd>{basin}</dd>'
+                f'<dt>Country</dt><dd>{country}</dd>'
+                f'<dt>Climate</dt><dd>{_climate_name(climate_val)}</dd>'
+                f'<dt>Age</dt><dd>{age} Ma</dd>'
+                '</dl></div>'
             )
             tooltip_text = f'{formation} ({basin})'
         else:
             parts = []
-            for idx, feat in enumerate(features, 1):
+            for feat in features:
                 props = feat.get('properties', {})
                 climate = get_climate_class(props) or ''
-                dot_color = color_map.get(climate, 'gray')
+                dot_color = color_map.get(climate, '#94a3b8')
                 formation = props.get('Formation') or 'N/A'
                 basin = props.get('Basin_Sub_') or 'N/A'
                 country = props.get('Country') or 'N/A'
                 age = props.get('TIME') or 'N/A'
                 parts.append(
-                    f'<div style="margin-bottom:6px; padding-bottom:6px; border-bottom:1px solid #ddd;">'
-                    f'<b>Point {idx}</b> '
-                    f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;'
-                    f'background:{dot_color};border:1px solid #333;vertical-align:middle;"></span><br>'
-                    f'<b>Formation:</b> {formation}<br>'
-                    f'<b>Basin:</b> {basin}<br>'
-                    f'<b>Country:</b> {country}<br>'
-                    f'<b>Climate:</b> {climate}<br>'
-                    f'<b>Age:</b> {age} Ma'
-                    f'</div>'
+                    '<div class="pcvs-popup-item">'
+                    f'<div class="pcvs-popup-name">'
+                    f'<span class="pcvs-dot" style="background:{dot_color}"></span>'
+                    f'{formation}</div>'
+                    '<dl>'
+                    f'<dt>Basin</dt><dd>{basin}</dd>'
+                    f'<dt>Country</dt><dd>{country}</dd>'
+                    f'<dt>Climate</dt><dd>{_climate_name(climate)}</dd>'
+                    f'<dt>Age</dt><dd>{age} Ma</dd>'
+                    '</dl></div>'
                 )
             counts = Counter(c for c in climates if c in _CLIMATE_DISPLAY_ORDER)
-            count_bits = [f'{c}:{counts[c]}' for c in _CLIMATE_DISPLAY_ORDER if c in counts]
-            winner_label = '/'.join(marker_climates) if marker_climates else '?'
+            count_bits = [f'{_climate_name(c)} {counts[c]}'
+                          for c in _CLIMATE_DISPLAY_ORDER if c in counts]
             popup_html = (
-                f'<div style="font-family: Arial; font-size: 12px; max-height: 300px; overflow-y: auto;">'
-                f'<div style="margin-bottom:4px;font-weight:bold;color:#2c3e50;">'
-                f'{len(features)} points at this location</div>'
-                f'<div style="margin-bottom:6px;font-size:11px;color:#555;">'
-                f'Marker color: {winner_label}'
-                f' ({", ".join(count_bits)})</div>'
-                + ''.join(parts)
-                + '</div>'
+                '<div class="pcvs-popup">'
+                f'<div class="pcvs-popup-head">{len(features)} points at this location</div>'
+                f'<div class="pcvs-popup-head" style="margin-bottom:8px">'
+                f'{" · ".join(count_bits)}</div>'
+                '<div class="pcvs-scroll">' + ''.join(parts) + '</div></div>'
             )
             names = list(OrderedDict.fromkeys(
                 f.get('properties', {}).get('Formation') or 'N/A' for f in features
@@ -1416,15 +2005,15 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
         # Solid markers keep the original CircleMarker size/stroke; only ties
         # use a DivIcon SVG pie with the same radius and weight.
         if len(marker_climates) <= 1:
-            fill_color = color_map.get(marker_climates[0], 'gray') if marker_climates else 'gray'
+            fill_color = color_map.get(marker_climates[0], '#94a3b8') if marker_climates else '#94a3b8'
             folium.CircleMarker(
                 location=[lat, lon],
                 radius=point_radius_px,
-                popup=folium.Popup(popup_html, max_width=350),
+                popup=folium.Popup(popup_html, max_width=320),
                 tooltip=tooltip_text,
-                color='black',
+                color='#111827',
                 fillColor=fill_color,
-                fillOpacity=0.7,
+                fillOpacity=MARKER_FILL_OPACITY,
                 weight=point_weight,
             ).add_to(points_group)
         else:
@@ -1432,10 +2021,12 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                 marker_climates, color_map,
                 radius_px=point_radius_px, weight_px=point_weight,
             )
-            icon_anchor = icon_outer_px // 2
+            # Fractional anchor: the SVG is an odd number of pixels wide, so
+            # rounding here would offset split markers from solid ones.
+            icon_anchor = icon_outer_px / 2.0
             folium.Marker(
                 location=[lat, lon],
-                popup=folium.Popup(popup_html, max_width=350),
+                popup=folium.Popup(popup_html, max_width=320),
                 tooltip=tooltip_text,
                 icon=folium.DivIcon(
                     html=icon_html,
@@ -1466,133 +2057,153 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             {% macro header(this, kwargs) %}
             <style>
                 .basin-filter-control {
-                    background: white;
-                    border-radius: 4px;
-                    box-shadow: 0 1px 5px rgba(0,0,0,0.4);
-                    font-family: Arial, sans-serif;
-                    font-size: 11px;
-                    max-height: 60vh;
+                    width: 216px;
+                    max-height: 62vh;
                     display: flex;
                     flex-direction: column;
+                    overflow: hidden;
                 }
                 .basin-filter-header {
-                    padding: 4px 8px;
-                    background: #2c3e50;
-                    color: white;
-                    font-weight: bold;
-                    font-size: 11px;
-                    cursor: pointer;
+                    padding: 7px 10px;
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
+                    gap: 8px;
+                    cursor: pointer;
                     user-select: none;
-                    border-radius: 4px;
-                    gap: 6px;
                 }
-                .basin-filter-control.open .basin-filter-header {
-                    border-radius: 4px 4px 0 0;
+                .basin-filter-header:hover { background: rgba(15, 23, 42, 0.04); }
+                .basin-filter-count {
+                    margin-left: auto;
+                    padding: 1px 6px;
+                    border-radius: 999px;
+                    background: rgba(47, 111, 237, 0.12);
+                    color: #2f6fed;
+                    font-size: 10px;
+                    font-weight: 650;
+                    font-variant-numeric: tabular-nums;
                 }
                 .basin-filter-header .arrow {
                     font-size: 8px;
-                    transition: transform 0.2s;
+                    color: #64748b;
+                    transition: transform 0.2s ease;
                 }
                 .basin-filter-control.open .basin-filter-header .arrow {
                     transform: rotate(180deg);
                 }
                 .basin-filter-body {
                     display: none;
-                    padding: 4px 6px;
+                    padding: 8px 10px 10px;
+                    border-top: 1px solid var(--pcvs-line);
                     overflow-y: auto;
-                    max-height: calc(60vh - 28px);
                 }
-                .basin-filter-control.open .basin-filter-body {
-                    display: block;
+                .basin-filter-control.open .basin-filter-body { display: block; }
+                .basin-filter-search {
+                    width: 100%;
+                    padding: 5px 8px;
+                    margin-bottom: 7px;
+                    font: inherit;
+                    font-size: 11.5px;
+                    color: inherit;
+                    border: 1px solid var(--pcvs-line);
+                    border-radius: 7px;
+                    background: rgba(255, 255, 255, 0.7);
+                    outline: none;
                 }
-                .basin-filter-actions {
-                    display: flex;
-                    gap: 4px;
-                    margin-bottom: 4px;
-                    padding-bottom: 4px;
-                    border-bottom: 1px solid #ddd;
+                .basin-filter-search:focus {
+                    border-color: #2f6fed;
+                    box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.14);
                 }
+                .basin-filter-actions { display: flex; gap: 6px; margin-bottom: 7px; }
                 .basin-filter-actions button {
                     flex: 1;
-                    padding: 2px 4px;
-                    font-size: 9px;
-                    border: 1px solid #bdc3c7;
-                    border-radius: 2px;
-                    background: #ecf0f1;
-                    cursor: pointer;
-                    font-family: Arial, sans-serif;
-                }
-                .basin-filter-actions button:hover {
-                    background: #bdc3c7;
-                }
-                .basin-filter-list {
-                    list-style: none;
-                    padding: 0;
-                    margin: 0;
-                }
-                .basin-filter-list li {
-                    padding: 1px 2px;
-                    display: flex;
-                    align-items: center;
-                }
-                .basin-filter-list li:hover {
-                    background: #ecf0f1;
-                    border-radius: 2px;
-                }
-                .basin-filter-list label {
-                    cursor: pointer;
-                    white-space: nowrap;
+                    padding: 4px 6px;
+                    font: inherit;
                     font-size: 10px;
+                    font-weight: 600;
+                    color: #475569;
+                    border: 1px solid var(--pcvs-line);
+                    border-radius: 7px;
+                    background: rgba(255, 255, 255, 0.7);
+                    cursor: pointer;
+                    transition: background 0.12s ease, color 0.12s ease;
+                }
+                .basin-filter-actions button:hover { background: rgba(15, 23, 42, 0.06); color: #0f172a; }
+                .basin-filter-list { list-style: none; padding: 0; margin: 0; }
+                .basin-filter-list li { border-radius: 6px; }
+                .basin-filter-list li:hover { background: rgba(15, 23, 42, 0.05); }
+                .basin-filter-list li.hidden { display: none; }
+                .basin-filter-list label {
                     display: flex;
                     align-items: center;
-                    gap: 3px;
+                    gap: 7px;
+                    padding: 3px 5px;
+                    font-size: 11.5px;
+                    line-height: 1.3;
+                    cursor: pointer;
                 }
                 .basin-filter-list input[type="checkbox"] {
                     margin: 0;
+                    flex: none;
+                    accent-color: #2f6fed;
+                }
+                .basin-filter-empty {
+                    padding: 6px 5px;
+                    font-size: 11px;
+                    color: #94a3b8;
                 }
             </style>
             {% endmacro %}
         """)
         m.get_root().add_child(basin_css)
 
-        basin_js = f"""
-            {{% macro script(this, kwargs) %}}
-            (function() {{
-                var map = {{{{ this._parent.get_name() }}}};
-                var pointsGroup = {pg_name};
-                var allBasins = {basins_json};
-                var markerBasins = {marker_basins_json};
+        _script_macro(m, """
+            (function() {
+                var map = {{ this._parent.get_name() }};
+                var pointsGroup = __GROUP__;
+                var allBasins = __BASINS__;
+                var markerBasins = __MARKER_BASINS__;
 
                 var allMarkers = [];
-                pointsGroup.eachLayer(function(layer) {{
+                pointsGroup.eachLayer(function(layer) {
                     allMarkers.push(layer);
-                }});
+                });
 
                 var selectedBasins = new Set(allBasins);
+                var countBadge, emptyHint;
 
-                var filterControl = L.control({{position: 'topleft'}});
-                filterControl.onAdd = function() {{
-                    var container = L.DomUtil.create('div', 'basin-filter-control');
+                var filterControl = L.control({position: 'topleft'});
+                filterControl.onAdd = function() {
+                    var container = L.DomUtil.create('div', 'pcvs-panel basin-filter-control');
                     L.DomEvent.disableClickPropagation(container);
                     L.DomEvent.disableScrollPropagation(container);
 
                     var header = L.DomUtil.create('div', 'basin-filter-header', container);
-                    header.innerHTML = 'Basins <span class="arrow">&#9660;</span>';
+                    header.innerHTML =
+                        '<span class="pcvs-panel-title">Basins</span>' +
+                        '<span class="basin-filter-count"></span>' +
+                        '<span class="arrow">&#9660;</span>';
+                    countBadge = header.querySelector('.basin-filter-count');
 
                     var body = L.DomUtil.create('div', 'basin-filter-body', container);
 
+                    var search = L.DomUtil.create('input', 'basin-filter-search', body);
+                    search.type = 'search';
+                    search.placeholder = 'Search basins';
+
                     var actions = L.DomUtil.create('div', 'basin-filter-actions', body);
                     var selectAllBtn = L.DomUtil.create('button', '', actions);
-                    selectAllBtn.textContent = 'Select All';
+                    selectAllBtn.textContent = 'Select all';
                     var deselectAllBtn = L.DomUtil.create('button', '', actions);
-                    deselectAllBtn.textContent = 'Deselect All';
+                    deselectAllBtn.textContent = 'Clear';
 
                     var list = L.DomUtil.create('ul', 'basin-filter-list', body);
-                    var checkboxes = [];
-                    allBasins.forEach(function(basin) {{
+                    emptyHint = L.DomUtil.create('div', 'basin-filter-empty', body);
+                    emptyHint.textContent = 'No basin matches this search.';
+                    emptyHint.style.display = 'none';
+
+                    var rows = [];
+                    allBasins.forEach(function(basin) {
                         var li = L.DomUtil.create('li', '', list);
                         var label = L.DomUtil.create('label', '', li);
                         var cb = document.createElement('input');
@@ -1600,186 +2211,146 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                         cb.checked = true;
                         cb.value = basin;
                         label.appendChild(cb);
-                        label.appendChild(document.createTextNode(' ' + basin));
-                        checkboxes.push(cb);
-                        cb.addEventListener('change', function() {{
-                            if (this.checked) {{
+                        label.appendChild(document.createTextNode(basin));
+                        rows.push({item: li, checkbox: cb, key: basin.toLowerCase()});
+                        cb.addEventListener('change', function() {
+                            if (this.checked) {
                                 selectedBasins.add(this.value);
-                            }} else {{
+                            } else {
                                 selectedBasins.delete(this.value);
-                            }}
+                            }
                             applyFilter();
-                        }});
-                    }});
+                        });
+                    });
 
-                    header.addEventListener('click', function() {{
+                    header.addEventListener('click', function() {
                         container.classList.toggle('open');
-                    }});
+                        if (container.classList.contains('open')) search.focus();
+                    });
 
-                    selectAllBtn.addEventListener('click', function() {{
-                        checkboxes.forEach(function(cb) {{
-                            cb.checked = true;
-                            selectedBasins.add(cb.value);
-                        }});
-                        applyFilter();
-                    }});
+                    search.addEventListener('input', function() {
+                        var q = this.value.trim().toLowerCase();
+                        var visible = 0;
+                        rows.forEach(function(row) {
+                            var match = !q || row.key.indexOf(q) !== -1;
+                            row.item.classList.toggle('hidden', !match);
+                            if (match) visible++;
+                        });
+                        emptyHint.style.display = visible ? 'none' : 'block';
+                    });
 
-                    deselectAllBtn.addEventListener('click', function() {{
-                        checkboxes.forEach(function(cb) {{
-                            cb.checked = false;
-                        }});
-                        selectedBasins.clear();
+                    function setAll(checked) {
+                        rows.forEach(function(row) {
+                            if (row.item.classList.contains('hidden')) return;
+                            row.checkbox.checked = checked;
+                            if (checked) {
+                                selectedBasins.add(row.checkbox.value);
+                            } else {
+                                selectedBasins.delete(row.checkbox.value);
+                            }
+                        });
                         applyFilter();
-                    }});
+                    }
+                    selectAllBtn.addEventListener('click', function() { setAll(true); });
+                    deselectAllBtn.addEventListener('click', function() { setAll(false); });
 
                     return container;
-                }};
+                };
                 filterControl.addTo(map);
 
-                function applyFilter() {{
-                    for (var i = 0; i < allMarkers.length; i++) {{
-                        var show = markerBasins[i].some(function(b) {{ return selectedBasins.has(b); }});
-                        if (show) {{
-                            if (!pointsGroup.hasLayer(allMarkers[i])) {{
+                function applyFilter() {
+                    var shown = 0;
+                    for (var i = 0; i < allMarkers.length; i++) {
+                        var show = markerBasins[i].some(function(b) { return selectedBasins.has(b); });
+                        if (show) {
+                            shown++;
+                            if (!pointsGroup.hasLayer(allMarkers[i])) {
                                 pointsGroup.addLayer(allMarkers[i]);
-                            }}
-                        }} else {{
-                            if (pointsGroup.hasLayer(allMarkers[i])) {{
-                                pointsGroup.removeLayer(allMarkers[i]);
-                            }}
-                        }}
-                    }}
-                }}
-            }})();
-            {{% endmacro %}}
-        """
-        basin_macro = MacroElement()
-        basin_macro._template = Template(basin_js)
-        m.add_child(basin_macro)
+                            }
+                        } else if (pointsGroup.hasLayer(allMarkers[i])) {
+                            pointsGroup.removeLayer(allMarkers[i]);
+                        }
+                    }
+                    if (countBadge) countBadge.textContent = shown + ' / ' + allMarkers.length;
+                }
+                applyFilter();
+            })();
+        """, group=pg_name, basins=basins_json, marker_basins=marker_basins_json)
 
     # Add color stats as a fixed Leaflet control (bottom-left) toggled via LayerControl checkbox
     if color_stats_img_path and os.path.exists(color_stats_img_path):
         stats = classificar_por_intervalos(color_stats_img_path)
         if stats is not None:
-            stats_checkbox_name = color_stats_name or 'Color Stats'
-            y = stats['pct_yellow']
-            g = stats['pct_green']
-            b = stats['pct_blue']
-            o = stats['pct_nao_classificado']
-            cy = stats['count_yellow']
-            cg = stats['count_green']
-            cb = stats['count_blue']
-            co = stats['nao_classificado']
+            stats_checkbox_name = color_stats_name or LAYER_COLOR_STATS
+            rows = [
+                ('D', 'Dry', stats['count_yellow'], stats['pct_yellow']),
+                ('S', 'Semi-arid', stats['count_green'], stats['pct_green']),
+                ('H', 'Humid', stats['count_blue'], stats['pct_blue']),
+                (None, 'Other', stats['nao_classificado'], stats['pct_nao_classificado']),
+            ]
+            body = ''.join(
+                '<tr>'
+                f'<td><span class="pcvs-dot" style="background:'
+                f'{CLIMATE_COLORS.get(code, "#cbd5e1")}"></span>{label}</td>'
+                f'<td align="right">{count:,}</td>'
+                f'<td align="right">{pct:.1f}%</td>'
+                '</tr>'
+                for code, label, count, pct in rows
+            )
+            stats_html = (
+                '<div class="pcvs-panel-title">Raster coverage</div>'
+                '<table>'
+                '<tr><th align="left">Class</th><th align="right">Pixels</th>'
+                '<th align="right">Share</th></tr>'
+                + body +
+                '</table>'
+            )
             # Empty FeatureGroup just to get a checkbox in the LayerControl
             stats_group = folium.FeatureGroup(name=stats_checkbox_name, show=True)
             stats_group.add_to(m)
-            control_js = f"""
-            {{% macro script(this, kwargs) %}}
-                var colorStatsControl = L.control({{position: 'bottomleft'}});
-                colorStatsControl.onAdd = function(map) {{
-                    var div = L.DomUtil.create('div', 'color-stats-control');
-                    div.style.background = 'rgba(255,255,255,0.92)';
-                    div.style.padding = '3.5px 7px';
-                    div.style.borderRadius = '3.5px';
-                    div.style.boxShadow = '0 0 3.5px rgba(0,0,0,0.2)';
-                    div.style.fontFamily = 'Arial, sans-serif';
-                    div.style.fontSize = '14px';
-                    div.style.lineHeight = '1.2';
-                    div.innerHTML = '<table style="border-collapse:collapse;font-size:14px">'
-                        + '<tr><th align="left">Class</th><th align="right" style="padding-left:9px">Pixels</th><th align="right" style="padding-left:5px">%</th></tr>'
-                        + '<tr><td>Dry (Yellow)</td><td align="right" style="padding-left:9px">{cy}</td><td align="right" style="padding-left:5px">{y:.1f}%</td></tr>'
-                        + '<tr><td>Semi-Arid (Green)</td><td align="right" style="padding-left:9px">{cg}</td><td align="right" style="padding-left:5px">{g:.1f}%</td></tr>'
-                        + '<tr><td>Humid (Blue)</td><td align="right" style="padding-left:9px">{cb}</td><td align="right" style="padding-left:5px">{b:.1f}%</td></tr>'
-                        + '<tr><td>Others</td><td align="right" style="padding-left:9px">{co}</td><td align="right" style="padding-left:5px">{o:.1f}%</td></tr>'
-                        + '</table>';
-                    return div;
-                }};
-                var _map = {{{{ this._parent.get_name() }}}};
-                colorStatsControl.addTo(_map);
-                _map.on('overlayremove', function(e) {{
-                    if (e.name === '{stats_checkbox_name}') {{
-                        _map.removeControl(colorStatsControl);
-                    }}
-                }});
-                _map.on('overlayadd', function(e) {{
-                    if (e.name === '{stats_checkbox_name}') {{
-                        colorStatsControl.addTo(_map);
-                    }}
-                }});
-            {{% endmacro %}}
-            """
-            macro = MacroElement()
-            macro._template = Template(control_js)
-            m.add_child(macro)
+            _script_macro(m, """
+                (function() {
+                    var map = {{ this._parent.get_name() }};
+                    var name = __NAME__;
+                    var colorStatsControl = L.control({position: 'bottomleft'});
+                    colorStatsControl.onAdd = function() {
+                        var div = L.DomUtil.create('div', 'pcvs-panel color-stats-control');
+                        div.innerHTML = __HTML__;
+                        L.DomEvent.disableClickPropagation(div);
+                        return div;
+                    };
+                    colorStatsControl.addTo(map);
+                    map.on('overlayremove', function(e) {
+                        if (e.name === name) map.removeControl(colorStatsControl);
+                    });
+                    map.on('overlayadd', function(e) {
+                        if (e.name === name) colorStatsControl.addTo(map);
+                    });
+                })();
+            """, name=json.dumps(stats_checkbox_name, ensure_ascii=False),
+                 html=json.dumps(stats_html, ensure_ascii=False))
 
     # Add layer control
     folium.LayerControl(collapsed=False).add_to(m)
 
-    # CSS: shrink zoom/fullscreen 30%, compact LayerControl, larger Color Stats font
-    ui_css = MacroElement()
-    ui_css._template = Template("""
-        {% macro header(this, kwargs) %}
-        <style>
-            .leaflet-control-zoom a {
-                width: 26px !important;
-                height: 26px !important;
-                line-height: 26px !important;
-                font-size: 16px !important;
-            }
-            .leaflet-control-zoom a.fullscreen-icon,
-            .leaflet-control-zoom a.leaflet-control-zoom-fullscreen {
-                width: 26px !important;
-                height: 26px !important;
-                line-height: 26px !important;
-                background-size: 26px 52px !important;
-            }
-            .leaflet-control-layers { font-size: 12px !important; padding: 3px 6px !important; }
-            .leaflet-control-layers label { margin-bottom: 0 !important; }
-            .leaflet-control-layers-overlays label,
-            .leaflet-control-layers-base label { padding: 0 !important; line-height: 1.3 !important; }
-            .leaflet-control-layers-separator { margin: 3px 0 !important; }
-            .color-stats-control { font-size: 17.5px !important; }
-            .color-stats-control table { font-size: 17.5px !important; }
-            .climate-point-icon {
-                background: transparent !important;
-                border: none !important;
-            }
-        </style>
-        {% endmacro %}
-    """)
-    m.get_root().add_child(ui_css)
+    _add_map_theme(m)
 
-    # Add fullscreen button
-    plugins.Fullscreen().add_to(m)
-    
     # Add measure tool
     plugins.MeasureControl().add_to(m)
 
     # Add coordinate graticule (always visible, 30° intervals)
     _add_graticule(m, interval=30)
 
-    # Stamp the interpolation backend on the map (kept in the PDF export, which
-    # only strips Leaflet controls)
-    if method:
-        badge_html = f"""
-        <div class="method-badge" style="
-            position: fixed;
-            bottom: 8px;
-            right: 8px;
-            z-index: 9999;
-            background: rgba(255,255,255,0.92);
-            border: 1px solid #7f8c8d;
-            border-radius: 3px;
-            padding: 3px 7px;
-            font-family: Arial, sans-serif;
-            font-size: 11px;
-            font-weight: bold;
-            color: #2c3e50;
-            box-shadow: 0 0 2px rgba(0,0,0,0.2);
-        ">Interpolation: {method_label(method)} ({method})</div>
-        """
-        m.get_root().html.add_child(folium.Element(badge_html))
-    
+    _add_legend(m)
+
+    # The title card doubles as the caption of exported PDFs, so it carries the
+    # age plus the interpolation the raster came from.
+    if age_label:
+        subtitle = map_subtitle or 'Paleogeographic reconstruction'
+        if method:
+            subtitle = f'{subtitle} · {method_label(method)}'
+        _add_title_card(m, age_label, subtitle)
+
     # Fit bounds to raster extent (tightest framing around interpolated area)
     raster_bounds = None
     if geotiff_path and os.path.exists(geotiff_path):
@@ -1789,10 +2360,15 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             pass
     if raster_bounds:
         m.fit_bounds(raster_bounds)
-    elif bounds_list:
-        all_lats = [b[0][0] for b in bounds_list] + [b[1][0] for b in bounds_list]
-        all_lons = [b[0][1] for b in bounds_list] + [b[1][1] for b in bounds_list]
-        m.fit_bounds([[min(all_lats), min(all_lons)], [max(all_lats), max(all_lons)]])
+    elif full_bounds:
+        m.fit_bounds(full_bounds)
+
+    _add_export_api(
+        m,
+        raster_bounds=raster_bounds,
+        full_bounds=full_bounds or raster_bounds,
+        export_basename=os.path.splitext(os.path.basename(output_file))[0],
+    )
     
     # Save map
     print(f"Saving map to {output_file}...")
@@ -1801,120 +2377,127 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     
     return output_file
 
-def html_to_pdf(html_path, pdf_path, wait_seconds=2, pdf_width_in=14, pdf_height_in=10):
-    """Export an HTML map to PDF: hide all UI controls and fit PDF to map content (no white borders)."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print("  PDF skipped (install playwright: pip install playwright && playwright install chromium)")
+PDF_SCOPES = ('full', 'raster')
+
+PDF_SCOPE_LABELS = {
+    'full': 'entire map',
+    'raster': 'raster area',
+}
+
+
+class PdfExporter:
+    """Render generated maps to PDF, reusing one headless browser.
+
+    Framing, chrome hiding and page geometry all come from ``window.PCVS``, the
+    same API the in-browser export button uses, so a downloaded PDF and a
+    pre-rendered one show the map the same way. Markers, strokes and panels are
+    left exactly as the map draws them on screen.
+    """
+
+    def __init__(self, wait_seconds=1.5):
+        self.wait_seconds = wait_seconds
+        self._playwright = None
+        self._browser = None
+        self.available = False
+
+    def start(self):
+        """Launch the headless browser. Leaves ``available`` False on failure."""
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            print("PDF export skipped (pip install playwright && playwright install chromium)")
+            return self
+        try:
+            self._playwright = sync_playwright().start()
+            self._browser = self._playwright.chromium.launch()
+            self.available = True
+        except Exception as e:
+            print(f"PDF export skipped (could not start Chromium: {e})")
+            self.close()
+        return self
+
+    def __enter__(self):
+        return self.start()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
         return False
-    if not os.path.exists(html_path):
-        return False
-    html_path_abs = os.path.abspath(html_path)
-    pdf_path_abs = os.path.abspath(pdf_path)
-    url = 'file://' + html_path_abs
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch()
-            # Viewport in pixels (landscape) so map can fill; will match PDF size
-            viewport_w = int(pdf_width_in * 96)
-            viewport_h = int(pdf_height_in * 96)
-            page = browser.new_page(viewport={'width': viewport_w, 'height': viewport_h})
-            page.goto(url, wait_until='networkidle', timeout=30000)
-            page.wait_for_timeout(wait_seconds * 1000)
 
-            # Hide all on-screen controls: Zoom, Full Screen, Measure, Layer control (OSM, Raster, Coastlines, Data points)
-            page.evaluate("""
-                () => {
-                    const sel = [
-                        '.leaflet-control-zoom',
-                        '.leaflet-control-layers',
-                        '.leaflet-control-attribution',
-                        '.leaflet-control-fullscreen',
-                        '.leaflet-control-measure',
-                        '.color-stats-control',
-                        '[class*="leaflet-control"]',
-                        '[class*="fullscreen"]',
-                        '[class*="measure"]'
-                    ].join(', ');
-                    document.querySelectorAll(sel).forEach(el => { el.style.setProperty('display', 'none', 'important'); });
-                }
-            """)
-            page.wait_for_timeout(300)
+    def close(self):
+        if self._browser is not None:
+            try:
+                self._browser.close()
+            except Exception:
+                pass
+            self._browser = None
+        if self._playwright is not None:
+            try:
+                self._playwright.stop()
+            except Exception:
+                pass
+            self._playwright = None
+        self.available = False
 
-            # Shrink point markers and coastline strokes only for PDF
-            page.evaluate("""
-                () => {
-                    if (typeof L === 'undefined') return;
-                    for (const key of Object.keys(window)) {
-                        try {
-                            const v = window[key];
-                            if (v && v instanceof L.Map) {
-                                v.eachLayer(l => {
-                                    if (l instanceof L.CircleMarker && !(l instanceof L.Marker)) {
-                                        l.setRadius(0.5);
-                                        l.setStyle({ weight: 0.3 });
-                                    } else if (l instanceof L.Polyline || l instanceof L.GeoJSON || l instanceof L.FeatureGroup) {
-                                        const shrinkWeight = (layer) => {
-                                            if (layer.setStyle && layer.options && typeof layer.options.weight === 'number') {
-                                                layer.setStyle({ weight: layer.options.weight * 0.8 });
-                                            }
-                                            if (layer.eachLayer) {
-                                                layer.eachLayer(shrinkWeight);
-                                            }
-                                        };
-                                        shrinkWeight(l);
-                                    }
-                                });
-                            }
-                        } catch(e) {}
-                    }
-                }
-            """)
-            page.wait_for_timeout(300)
+    def export(self, html_path, pdf_path, scope='full'):
+        """Write one PDF of ``html_path`` framed on ``scope``."""
+        if not self.available or not os.path.exists(html_path):
+            return False
+        pdf_path_abs = os.path.abspath(pdf_path)
+        out_dir = os.path.dirname(pdf_path_abs)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        page = None
+        try:
+            page = self._browser.new_page(viewport={'width': 1280, 'height': 900})
+            page.goto('file://' + os.path.abspath(html_path),
+                      wait_until='load', timeout=60000)
+            page.wait_for_function('window.PCVS !== undefined', timeout=30000)
 
-            # Make map fill the entire viewport (remove white around map)
-            page.evaluate("""
-                () => {
-                    const style = document.createElement('style');
-                    style.textContent = `
-                        html, body { margin: 0 !important; padding: 0 !important; width: 100% !important; height: 100% !important; overflow: hidden !important; }
-                        .folium-map, #map, [id^="map_"] { position: fixed !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; }
-                    `;
-                    document.head.appendChild(style);
-                    const mapEl = document.querySelector('.folium-map') || document.getElementById('map') || document.querySelector('[id^="map_"]');
-                    if (mapEl) {
-                        mapEl.style.width = '100%';
-                        mapEl.style.height = '100%';
-                        mapEl.style.position = 'fixed';
-                        mapEl.style.top = '0';
-                        mapEl.style.left = '0';
-                        if (typeof L !== 'undefined') {
-                            for (const key of Object.keys(window)) {
-                                try {
-                                    if (window[key] instanceof L.Map) { window[key].invalidateSize(); break; }
-                                } catch(e) {}
-                            }
-                        }
-                    }
-                }
-            """)
-            page.wait_for_timeout(500)
+            # The page is sized to the region being exported, so the map fills
+            # it with no margins to trim afterwards.
+            size = page.evaluate('scope => window.PCVS.exportSize(scope)', scope)
+            page.set_viewport_size(size)
+            page.evaluate(
+                'scope => window.PCVS.beginExport({scope: scope, resize: false})',
+                scope,
+            )
+            page.evaluate('() => window.PCVS.settled()')
+            page.wait_for_timeout(int(self.wait_seconds * 1000))
 
-            # PDF: same size as viewport, no margins, so content fills the page
+            # Keep screen styling: print media would drop the map background.
+            page.emulate_media(media='screen')
             page.pdf(
                 path=pdf_path_abs,
-                width='%sin' % pdf_width_in,
-                height='%sin' % pdf_height_in,
+                width=f"{size['width']}px",
+                height=f"{size['height']}px",
                 margin={'top': '0', 'right': '0', 'bottom': '0', 'left': '0'},
-                print_background=True
+                print_background=True,
             )
-            browser.close()
-        print(f"  PDF saved: {pdf_path}")
-        return True
-    except Exception as e:
-        print(f"  PDF failed for {html_path}: {e}")
-        return False
+            print(f"  PDF saved ({PDF_SCOPE_LABELS.get(scope, scope)}): {pdf_path}")
+            return True
+        except Exception as e:
+            print(f"  PDF failed for {html_path} [{scope}]: {e}")
+            return False
+        finally:
+            if page is not None:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+
+    def export_all(self, html_path, scopes=PDF_SCOPES):
+        """Write one PDF per scope next to ``html_path``. Returns paths written."""
+        written = []
+        for scope in scopes:
+            pdf_path = pdf_path_for(html_path, scope)
+            if self.export(html_path, pdf_path, scope=scope):
+                written.append(pdf_path)
+        return written
+
+
+def pdf_path_for(html_path, scope):
+    """Path of the PDF holding ``html_path`` framed on ``scope``."""
+    return f"{os.path.splitext(html_path)[0]}_{scope}.pdf"
 
 def discover_geojson_datasets(geojson_dir='GEOJSON'):
     """
@@ -1979,7 +2562,7 @@ def _extract_method_tag(filename):
     return ''
 
 def generate_index_html(dir_knn_idw, dir_idw, output='index.html'):
-    """Generate an index.html with a dropdown to switch between KNN+IDW map HTMLs."""
+    """Generate the viewer shell that switches between the generated maps."""
     maps_list = []
     folder = dir_knn_idw
     if os.path.isdir(folder):
@@ -1989,123 +2572,488 @@ def generate_index_html(dir_knn_idw, dir_idw, output='index.html'):
         )
         for h in htmls:
             age = _extract_age_sort_key(h)
-            method = _extract_method_tag(h)
-            label = f"{age} Ma ({method})" if method else f"{age} Ma"
-            pdf_name = h.replace('.html', '.pdf')
-            pdf_path = f"{folder}/{pdf_name}"
+            html_path = f"{folder}/{h}"
+            pdfs = {}
+            for scope in PDF_SCOPES:
+                candidate = pdf_path_for(html_path, scope)
+                if os.path.isfile(candidate):
+                    pdfs[scope] = candidate
             comparison_path = f"COMPARISON/comparison_report_{age}.html"
             maps_list.append({
-                'path': f"{folder}/{h}",
-                'label': label,
-                'pdf': pdf_path if os.path.isfile(pdf_path) else '',
+                'path': html_path,
+                'age': age,
+                'label': f"{age} Ma",
+                'method': _extract_method_tag(h),
+                'pdf': pdfs,
                 'comparison': comparison_path if os.path.isfile(comparison_path) else '',
             })
 
     if not maps_list:
         return
 
-    import json as _json
-    maps_json = _json.dumps(maps_list)
-
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PCVS - Paleoclimate Visualization System</title>
-<style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{ font-family: Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; }}
-  .toolbar {{
-    display: flex; align-items: center; gap: 10px;
-    padding: 6px 12px; background: #2c3e50; color: #fff;
-    font-size: 13px; flex-shrink: 0;
-  }}
-  .toolbar label {{ font-weight: bold; }}
-  .toolbar select {{
-    padding: 3px 6px; font-size: 12px; border-radius: 3px;
-    border: 1px solid #7f8c8d; background: #ecf0f1; min-width: 160px;
-  }}
-  .toolbar .btn-pdf,
-  .toolbar .btn-comparison {{
-    padding: 4px 10px; font-size: 11px; border-radius: 3px;
-    border: 1px solid #7f8c8d; color: #fff;
-    cursor: pointer; font-weight: bold; font-family: Arial, sans-serif;
-  }}
-  .toolbar .btn-pdf {{ background: #e74c3c; }}
-  .toolbar .btn-pdf:hover {{ background: #c0392b; }}
-  .toolbar .btn-pdf.disabled {{
-    background: #95a5a6; cursor: default; pointer-events: none; opacity: 0.7;
-  }}
-  .toolbar .btn-comparison {{ background: #2980b9; display: none; }}
-  .toolbar .btn-comparison:hover {{ background: #1f6a97; }}
-  .toolbar .btn-comparison.visible {{ display: inline-block; }}
-  iframe {{ flex: 1; border: none; width: 100%; }}
-</style>
-</head>
-<body>
-<div class="toolbar">
-  <label for="mapSelect">Map:</label>
-  <select id="mapSelect" onchange="onSelectMap(this.value)"></select>
-  <button id="pdfBtn" class="btn-pdf disabled" onclick="downloadPdf()">&#8681; PDF</button>
-  <button id="comparisonBtn" class="btn-comparison" onclick="openComparison()">Comparação</button>
-</div>
-<iframe id="mapFrame"></iframe>
-<script>
-var _maps = {maps_json};
-var _currentPdf = '';
-var _currentComparison = '';
-(function() {{
-  var select = document.getElementById('mapSelect');
-  _maps.forEach(function(m, i) {{
-    var opt = document.createElement('option');
-    opt.value = i;
-    opt.textContent = m.label;
-    select.appendChild(opt);
-  }});
-  if (_maps.length > 0) onSelectMap(0);
-}})();
-
-function onSelectMap(idx) {{
-  var m = _maps[idx];
-  document.getElementById('mapFrame').src = m.path;
-  var btn = document.getElementById('pdfBtn');
-  _currentPdf = m.pdf || '';
-  if (_currentPdf) {{
-    btn.classList.remove('disabled');
-  }} else {{
-    btn.classList.add('disabled');
-  }}
-  var cmpBtn = document.getElementById('comparisonBtn');
-  _currentComparison = m.comparison || '';
-  if (_currentComparison) {{
-    cmpBtn.classList.add('visible');
-  }} else {{
-    cmpBtn.classList.remove('visible');
-  }}
-}}
-
-function downloadPdf() {{
-  if (!_currentPdf) return;
-  var a = document.createElement('a');
-  a.href = _currentPdf;
-  a.download = _currentPdf.split('/').pop();
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-}}
-
-function openComparison() {{
-  if (!_currentComparison) return;
-  window.open(_currentComparison, '_blank');
-}}
-</script>
-</body>
-</html>"""
+    html = (INDEX_TEMPLATE
+            .replace('__MAPS__', json.dumps(maps_list, ensure_ascii=False))
+            .replace('__BACKGROUND__', MAP_BACKGROUND))
 
     with open(output, 'w', encoding='utf-8') as f:
         f.write(html)
     print(f"Index page generated: {output}")
+
+
+INDEX_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PCVS · Paleoclimate Visualization System</title>
+<style>
+  :root {
+    --ink: #0f172a;
+    --muted: #64748b;
+    --line: rgba(148, 163, 184, 0.28);
+    --accent: #2f6fed;
+    --header-1: #131c2e;
+    --header-2: #0a1120;
+    --on-header: #e8edf6;
+    --on-header-dim: #93a3bd;
+    --radius: 10px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    background: __BACKGROUND__;
+    display: flex;
+    flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 9px 16px;
+    background: linear-gradient(180deg, var(--header-1), var(--header-2));
+    color: var(--on-header);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: 0 1px 12px rgba(8, 15, 30, 0.28);
+    z-index: 5;
+  }
+
+  .brand { display: flex; align-items: baseline; gap: 9px; flex: none; }
+  .brand-mark {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+  }
+  .brand-sub {
+    font-size: 10.5px;
+    color: var(--on-header-dim);
+    letter-spacing: 0.02em;
+  }
+
+  .divider {
+    width: 1px;
+    height: 26px;
+    background: rgba(255, 255, 255, 0.12);
+    flex: none;
+  }
+
+  .field { display: flex; align-items: center; gap: 8px; flex: none; }
+  .field-label {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--on-header-dim);
+  }
+
+  select, .btn, .toggle {
+    font: inherit;
+    font-size: 12px;
+    color: var(--on-header);
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+  }
+  select { padding: 5px 9px; min-width: 108px; cursor: pointer; }
+  select:hover { background: rgba(255, 255, 255, 0.12); }
+  select option { color: #0f172a; background: #fff; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 11px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
+  .btn:disabled { opacity: 0.38; cursor: not-allowed; }
+  .btn[hidden] { display: none; }
+  .btn-icon { padding: 6px 8px; font-size: 13px; line-height: 1; }
+  .btn-primary {
+    background: var(--accent);
+    border-color: transparent;
+    color: #fff;
+  }
+  .btn-primary:hover:not(:disabled) { background: #2a62d4; }
+  .btn.busy { pointer-events: none; opacity: 0.75; }
+  :focus-visible { outline: 2px solid #7aa5ff; outline-offset: 2px; }
+
+  /* Age timeline */
+  .timeline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 260px;
+    max-width: 460px;
+  }
+  .timeline input[type="range"] {
+    flex: 1;
+    min-width: 90px;
+    height: 22px;
+    accent-color: var(--accent);
+    background: transparent;
+    cursor: pointer;
+  }
+  .timeline-hint {
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--on-header-dim);
+    white-space: nowrap;
+  }
+
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 10px;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .toggle:hover { background: rgba(255, 255, 255, 0.12); }
+  .toggle input { margin: 0; accent-color: var(--accent); cursor: pointer; }
+
+  .spacer { flex: 1; }
+
+  /* Map area */
+  main { position: relative; flex: 1; min-height: 0; }
+  iframe { width: 100%; height: 100%; border: none; display: block; }
+
+  .loader {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: __BACKGROUND__;
+    color: var(--muted);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  .loader.on { opacity: 1; }
+  .loader .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin: 0 auto 10px;
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(0.7); opacity: 0.35; }
+    50% { transform: scale(1.25); opacity: 1; }
+  }
+
+  /* Toast */
+  .toast {
+    position: absolute;
+    left: 50%;
+    bottom: 22px;
+    transform: translate(-50%, 14px);
+    padding: 9px 16px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.94);
+    color: #f1f5f9;
+    font-size: 12px;
+    box-shadow: 0 10px 30px -10px rgba(15, 23, 42, 0.6);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 10;
+  }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+  .toast.error { background: #7f1d1d; }
+
+  @media (max-width: 900px) {
+    header { flex-wrap: wrap; gap: 10px 14px; }
+    .brand-sub, .divider { display: none; }
+    .timeline { order: 10; flex-basis: 100%; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="brand-mark">PCVS</span>
+    <span class="brand-sub">Paleoclimate Visualization System</span>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="field">
+    <span class="field-label">Age</span>
+    <select id="mapSelect" aria-label="Reconstruction age"></select>
+  </div>
+
+  <div class="timeline">
+    <span class="timeline-hint">Recent</span>
+    <button class="btn btn-icon" id="prevBtn" title="Younger reconstruction (←)"
+            aria-label="Younger age">&#9664;</button>
+    <input type="range" id="ageRange" min="0" max="0" step="1" list="ageTicks"
+           aria-label="Age timeline">
+    <datalist id="ageTicks"></datalist>
+    <button class="btn btn-icon" id="nextBtn" title="Older reconstruction (→)"
+            aria-label="Older age">&#9654;</button>
+    <span class="timeline-hint">Ancient</span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <label class="toggle" id="scopeToggle"
+         title="Export only the area covered by the interpolated raster instead of the whole map">
+    <input type="checkbox" id="rasterOnly">
+    <span>Raster area only</span>
+  </label>
+  <button class="btn btn-primary" id="pdfBtn" title="Export the map as shown (P)">
+    <span>&#8681;</span><span id="pdfLabel">PDF</span>
+  </button>
+  <button class="btn" id="comparisonBtn" hidden>Comparison</button>
+</header>
+
+<main>
+  <iframe id="mapFrame" title="Paleogeographic map"></iframe>
+  <div class="loader" id="loader"><div><span class="dot"></span>Loading map</div></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</main>
+
+<script>
+var MAPS = __MAPS__;
+var STORAGE_KEY = 'pcvs:age';
+
+var frame = document.getElementById('mapFrame');
+var select = document.getElementById('mapSelect');
+var range = document.getElementById('ageRange');
+var ticks = document.getElementById('ageTicks');
+var prevBtn = document.getElementById('prevBtn');
+var nextBtn = document.getElementById('nextBtn');
+var pdfBtn = document.getElementById('pdfBtn');
+var pdfLabel = document.getElementById('pdfLabel');
+var rasterOnly = document.getElementById('rasterOnly');
+var comparisonBtn = document.getElementById('comparisonBtn');
+var loader = document.getElementById('loader');
+var toast = document.getElementById('toast');
+
+var current = 0;
+var toastTimer = null;
+
+function showToast(message, isError) {
+  toast.textContent = message;
+  toast.classList.toggle('error', !!isError);
+  toast.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function() { toast.classList.remove('on'); },
+                          isError ? 6000 : 3000);
+}
+
+function indexForAge(age) {
+  for (var i = 0; i < MAPS.length; i++) {
+    if (String(MAPS[i].age) === String(age)) return i;
+  }
+  return -1;
+}
+
+function initialIndex() {
+  var fromHash = (location.hash.match(/age=(\\d+)/) || [])[1];
+  var stored = null;
+  try { stored = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+  var idx = indexForAge(fromHash);
+  if (idx < 0) idx = indexForAge(stored);
+  return idx < 0 ? 0 : idx;
+}
+
+function clamp(idx) {
+  return Math.max(0, Math.min(MAPS.length - 1, idx));
+}
+
+/* Update the header for an age without reloading the map, so dragging the
+   timeline stays responsive instead of loading every age it passes over. */
+function preview(idx) {
+  var at = clamp(idx);
+  select.value = String(at);
+  range.value = String(at);
+  prevBtn.disabled = at === 0;
+  nextBtn.disabled = at === MAPS.length - 1;
+}
+
+function selectMap(idx, pushHash) {
+  current = clamp(idx);
+  var entry = MAPS[current];
+  preview(current);
+
+  loader.classList.add('on');
+  pdfBtn.disabled = true;
+  frame.src = entry.path;
+
+  comparisonBtn.hidden = !entry.comparison;
+  if (pushHash !== false) {
+    history.replaceState(null, '', '#age=' + entry.age);
+  }
+  try { localStorage.setItem(STORAGE_KEY, String(entry.age)); } catch (e) {}
+}
+
+function currentScope() {
+  return rasterOnly.checked ? 'raster' : 'full';
+}
+
+function downloadBlob(blob, filename) {
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function() { URL.revokeObjectURL(url); }, 4000);
+}
+
+/* Pre-rendered PDFs are the fallback for browsers that cannot reach into the
+   frame (for instance when the site is opened straight from disk). They show
+   the map with every layer on, which is how it loads. */
+function downloadPrerendered(scope) {
+  var entry = MAPS[current];
+  var href = (entry.pdf || {})[scope] || (entry.pdf || {}).full;
+  if (!href) {
+    showToast('No PDF available for this map.', true);
+    return false;
+  }
+  var a = document.createElement('a');
+  a.href = href;
+  a.download = href.split('/').pop();
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  return true;
+}
+
+/* The frame renders itself, so the PDF carries exactly the layers, filters and
+   styling on screen at that moment. */
+function exportLive(scope) {
+  var target = frame.contentWindow;
+  if (!target) return Promise.reject(new Error('Map frame is not ready'));
+  return new Promise(function(resolve, reject) {
+    var id = 'export-' + Date.now();
+    var timer = setTimeout(function() {
+      window.removeEventListener('message', onMessage);
+      reject(new Error('export timed out'));
+    }, 60000);
+
+    function onMessage(event) {
+      var data = event.data;
+      if (!data || data.id !== id) return;
+      if (data.pcvs === 'export-result') {
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        downloadBlob(new Blob([data.buffer], {type: 'application/pdf'}), data.filename);
+        resolve();
+      } else if (data.pcvs === 'export-error') {
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        reject(new Error(data.message));
+      }
+    }
+
+    window.addEventListener('message', onMessage);
+    target.postMessage({pcvs: 'export', scope: scope, id: id}, '*');
+  });
+}
+
+function exportPdf() {
+  if (pdfBtn.disabled || pdfBtn.classList.contains('busy')) return;
+  var scope = currentScope();
+  pdfBtn.classList.add('busy');
+  pdfLabel.textContent = 'Exporting…';
+  showToast('Rendering the ' + (scope === 'raster' ? 'raster area' : 'entire map') + '…');
+
+  exportLive(scope).then(function() {
+    showToast('PDF exported.');
+  }).catch(function(err) {
+    if (downloadPrerendered(scope)) {
+      showToast('Live export unavailable (' + err.message +
+                '); downloaded the pre-rendered PDF instead.', true);
+    }
+  }).finally(function() {
+    pdfBtn.classList.remove('busy');
+    pdfLabel.textContent = 'PDF';
+  });
+}
+
+MAPS.forEach(function(entry, i) {
+  var option = document.createElement('option');
+  option.value = String(i);
+  option.textContent = entry.label;
+  select.appendChild(option);
+
+  var tick = document.createElement('option');
+  tick.value = String(i);
+  tick.label = entry.label;
+  ticks.appendChild(tick);
+});
+range.max = String(MAPS.length - 1);
+
+select.addEventListener('change', function() { selectMap(Number(this.value)); });
+range.addEventListener('input', function() { preview(Number(this.value)); });
+range.addEventListener('change', function() { selectMap(Number(this.value)); });
+prevBtn.addEventListener('click', function() { selectMap(current - 1); });
+nextBtn.addEventListener('click', function() { selectMap(current + 1); });
+pdfBtn.addEventListener('click', exportPdf);
+comparisonBtn.addEventListener('click', function() {
+  var entry = MAPS[current];
+  if (entry.comparison) window.open(entry.comparison, '_blank');
+});
+frame.addEventListener('load', function() {
+  loader.classList.remove('on');
+  pdfBtn.disabled = false;
+});
+window.addEventListener('hashchange', function() {
+  var idx = indexForAge((location.hash.match(/age=(\\d+)/) || [])[1]);
+  if (idx >= 0 && idx !== current) selectMap(idx, false);
+});
+
+document.addEventListener('keydown', function(event) {
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  var tag = (event.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+  if (event.key === 'ArrowLeft') { selectMap(current - 1); event.preventDefault(); }
+  else if (event.key === 'ArrowRight') { selectMap(current + 1); event.preventDefault(); }
+  else if (event.key === 'p' || event.key === 'P') { exportPdf(); }
+});
+
+selectMap(initialIndex(), false);
+</script>
+</body>
+</html>"""
 
 def _print_metrics_summary(total_elapsed, dataset_metrics, rss_start, rss_end, rss_peak):
     """Print a summary of execution times and RAM usage per dataset and overall."""
@@ -2127,8 +3075,23 @@ def _print_metrics_summary(total_elapsed, dataset_metrics, rss_start, rss_end, r
             print(f"  [{_format_metrics(step['elapsed'], step['rss_delta'], step['rss_peak'])}] {step['label']}")
 
 
+def _use_utf8_console():
+    """Let progress output print non-ASCII characters on any console.
+
+    Windows terminals default to a legacy code page that cannot encode the
+    characters used in the metrics lines, which would abort the run partway
+    through with a UnicodeEncodeError.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError):
+            pass
+
+
 def main():
     """Generate maps for every point+costa dataset found in GEOJSON/."""
+    _use_utf8_console()
     _RSS_SAMPLER.start()
     script_start = time.perf_counter()
     script_rss_start = _RSS_SAMPLER.sample()
@@ -2143,7 +3106,8 @@ def main():
     parser.add_argument('--geojson-dir', default='GEOJSON',
                         help='Directory containing point and coastline GeoJSON files (default: GEOJSON)')
     parser.add_argument('--pdf', action='store_true',
-                        help='Export each map to PDF (requires playwright; PDFs are generated with OSM off)')
+                        help='Export each map to PDF, one framed on the entire map and one on '
+                             'the raster area (requires playwright)')
     parser.add_argument('--map', dest='maps', nargs='+', metavar='DATASET',
                         help='Render only the given dataset(s), e.g. --map 110 or --map 110 115 (default: all)')
     method_group = parser.add_mutually_exclusive_group()
@@ -2174,6 +3138,11 @@ def main():
     for d in (dir_geotiffs, dir_idw_maps, dir_knn_idw_maps):
         os.makedirs(d, exist_ok=True)
 
+    # One browser serves every export; launching one per PDF dominated the run.
+    pdf_exporter = PdfExporter()
+    if args.pdf:
+        pdf_exporter.start()
+
     generated = []
     for base, points_path, coast_path in datasets:
         dataset_start = time.perf_counter()
@@ -2189,7 +3158,7 @@ def main():
                 'rss_peak': timer.rss_peak,
             })
 
-        title_label = base.replace('_', ' ')  # e.g. 110 ma
+        age_label = base.replace('_ma', '').replace('_', ' ') + ' Ma'
         print("\n" + "=" * 60)
         print(f"DATASET: {base}")
         print("=" * 60)
@@ -2234,16 +3203,16 @@ def main():
                     coastline_data=coastline_data,
                     geotiff_path=original_raster_path,
                     output_file=map1_file,
-                    map_title=f'Paleogeographic Map - {title_label} (Original Data)',
                     raster_img_path=os.path.join(dir_idw_maps, f'raster_overlay_{base}_original.png'),
-                    raster_layer_name='Raster (Original)',
-                    gradient_sharp=gradient_sharp
+                    gradient_sharp=gradient_sharp,
+                    age_label=age_label,
+                    map_subtitle='Original raster',
                 )
             _record_step(t)
             generated.append(map1_file)
-            if args.pdf:
+            if pdf_exporter.available:
                 with StepTimer("PDF: Original Data") as t:
-                    html_to_pdf(map1_file, os.path.join(dir_idw_maps, os.path.basename(map1_file).replace('.html', '.pdf')))
+                    pdf_exporter.export_all(map1_file)
                 _record_step(t)
         else:
             print(f"Original raster not found ({original_raster_path}), skipping Original map.")
@@ -2269,19 +3238,18 @@ def main():
                 coastline_data=coastline_data,
                 geotiff_path=idw_only_raster_path,
                 output_file=map_idw_file,
-                map_title=f'Paleogeographic Map - {title_label} (IDW only, {method_label(method)})',
                 raster_img_path=raster_overlay_idw_png,
-                raster_layer_name=f'Raster (IDW only, {method})',
                 gradient_sharp=gradient_sharp,
                 color_stats_img_path=raster_overlay_idw_png,
-                color_stats_name=f'Color Stats (IDW)',
-                method=method
+                method=method,
+                age_label=age_label,
+                map_subtitle='IDW interpolation',
             )
         _record_step(t)
         generated.append(map_idw_file)
-        if args.pdf:
+        if pdf_exporter.available:
             with StepTimer("PDF: IDW only") as t:
-                html_to_pdf(map_idw_file, os.path.join(dir_idw_maps, os.path.basename(map_idw_file).replace('.html', '.pdf')))
+                pdf_exporter.export_all(map_idw_file)
             _record_step(t)
 
         print(f"Executing KNN Smoothing + IDW Interpolation — {method_label(method)}")
@@ -2309,20 +3277,19 @@ def main():
                 coastline_data=coastline_data,
                 geotiff_path=idw_raster_path,
                 output_file=map_knn_idw_file,
-                map_title=f'Paleogeographic Map - {title_label} (KNN + IDW Interpolated, {method_label(method)})',
                 raster_img_path=raster_overlay_knn_idw_png,
                 point_values_override=knn_values,
-                raster_layer_name=f'Raster (KNN + IDW, {method})',
                 gradient_sharp=gradient_sharp,
                 color_stats_img_path=raster_overlay_knn_idw_png,
-                color_stats_name=f'Color Stats (KNN + IDW)',
-                method=method
+                method=method,
+                age_label=age_label,
+                map_subtitle='KNN + IDW interpolation',
             )
         _record_step(t)
         generated.append(map_knn_idw_file)
-        if args.pdf:
+        if pdf_exporter.available:
             with StepTimer("PDF: KNN + IDW") as t:
-                html_to_pdf(map_knn_idw_file, os.path.join(dir_knn_idw_maps, os.path.basename(map_knn_idw_file).replace('.html', '.pdf')))
+                pdf_exporter.export_all(map_knn_idw_file)
             _record_step(t)
 
         dataset_total = time.perf_counter() - dataset_start
@@ -2340,6 +3307,7 @@ def main():
         })
         print(f"  Dataset total: {_format_metrics(dataset_total, dataset_rss_delta, dataset_rss_peak)}")
 
+    pdf_exporter.close()
     total_elapsed = time.perf_counter() - script_start
 
     print("\n" + "=" * 60)
