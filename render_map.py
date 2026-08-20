@@ -2942,12 +2942,13 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Age timeline */
+  /* Age timeline. flex-shrink is 0 so showing Comparison on 105/115 Ma
+     cannot steal width from the slider. Extra chrome comes out of .spacer. */
   .timeline {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex: 1 1 260px;
+    flex: 1 0 260px;
     max-width: 460px;
   }
   .timeline input[type="range"] {
@@ -2978,7 +2979,13 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   .toggle:hover { background: rgba(255, 255, 255, 0.12); }
   .toggle input { margin: 0; accent-color: var(--accent); cursor: pointer; }
 
-  .spacer { flex: 1; }
+  .spacer { flex: 1 1 0; min-width: 8px; }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: none;
+  }
 
   /* Map area */
   main { position: relative; flex: 1; min-height: 0; }
@@ -3083,21 +3090,23 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
 
   <div class="spacer"></div>
 
-  <label class="toggle" id="scopeToggle"
-         title="Export only the area covered by the interpolated raster instead of the whole map">
-    <input type="checkbox" id="rasterOnly">
-    <span>Raster area only</span>
-  </label>
-  <button class="btn btn-primary" id="pdfBtn" title="Export the map as shown (P)">
-    <span class="btn-ico" aria-hidden="true">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
-           stroke-linecap="round" stroke-linejoin="round">
-        <path d="M8 2v8M4.6 6.9 8 10.3l3.4-3.4M2.8 13.4h10.4"/>
-      </svg>
-      <i></i>
-    </span><span>PDF</span>
-  </button>
-  <button class="btn" id="comparisonBtn" hidden>Comparison</button>
+  <div class="header-actions">
+    <button class="btn" id="comparisonBtn" hidden>Comparison</button>
+    <label class="toggle" id="scopeToggle"
+           title="Export only the area covered by the interpolated raster instead of the whole map">
+      <input type="checkbox" id="rasterOnly">
+      <span>Raster area only</span>
+    </label>
+    <button class="btn btn-primary" id="pdfBtn" title="Export the map as shown (P)">
+      <span class="btn-ico" aria-hidden="true">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 2v8M4.6 6.9 8 10.3l3.4-3.4M2.8 13.4h10.4"/>
+        </svg>
+        <i></i>
+      </span><span>PDF</span>
+    </button>
+  </div>
 </header>
 
 <main>
