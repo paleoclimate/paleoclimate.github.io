@@ -2986,6 +2986,12 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     gap: 10px;
     flex: none;
   }
+  /* Keep the Comparison slot on every age. display:none would hand that
+     width back to the timeline when leaving 105/115 Ma. */
+  #comparisonBtn.is-absent {
+    visibility: hidden;
+    pointer-events: none;
+  }
 
   /* Map area */
   main { position: relative; flex: 1; min-height: 0; }
@@ -3091,7 +3097,8 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   <div class="spacer"></div>
 
   <div class="header-actions">
-    <button class="btn" id="comparisonBtn" hidden>Comparison</button>
+    <button type="button" class="btn is-absent" id="comparisonBtn"
+            aria-hidden="true" tabindex="-1">Comparison</button>
     <label class="toggle" id="scopeToggle"
            title="Export only the area covered by the interpolated raster instead of the whole map">
       <input type="checkbox" id="rasterOnly">
@@ -3207,7 +3214,11 @@ function selectMap(idx, pushHash) {
   pdfBtn.disabled = true;
   frame.src = entry.path;
 
-  comparisonBtn.hidden = !entry.comparison;
+  var hasComparison = Boolean(entry.comparison);
+  comparisonBtn.classList.toggle('is-absent', !hasComparison);
+  comparisonBtn.setAttribute('aria-hidden', hasComparison ? 'false' : 'true');
+  comparisonBtn.tabIndex = hasComparison ? 0 : -1;
+  if (!hasComparison && document.activeElement === comparisonBtn) comparisonBtn.blur();
   if (pushHash !== false) {
     history.replaceState(null, '', '#age=' + entry.age);
   }
