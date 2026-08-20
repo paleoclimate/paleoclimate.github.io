@@ -1548,6 +1548,18 @@ MAP_THEME_CSS = """
         }
         @keyframes pcvs-spin { to { transform: rotate(360deg); } }
 
+        /* Covers the reserved footer of a raster-only export so coastlines
+           south of the surface do not run through the coverage card. */
+        .pcvs-export-stats-band {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 700;
+            pointer-events: none;
+            background: __BACKGROUND__;
+        }
+
         /* Everything that only exists for on-screen interaction is stripped
            from exports, so a PDF shows the map and its read-only panels only. */
         .pcvs-exporting .leaflet-control-zoom,
@@ -1634,16 +1646,16 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
             }
 
             /* When a raster-only export keeps the coverage panel, the fitted
-               region has to sit to the right of it or the panel covers the
-               surface. Measured from the live control so an unchecked layer
-               costs no extra margin. */
+               region sits above it so the panel does not cover the surface.
+               Measured from the live control so an unchecked layer costs no
+               extra margin. */
             function colorStatsPadPx() {
                 var panel = map.getContainer().querySelector('.color-stats-control');
                 if (!panel) return 0;
                 var mapRect = map.getContainer().getBoundingClientRect();
                 var panelRect = panel.getBoundingClientRect();
-                if (panelRect.width < 1) return 0;
-                return Math.max(0, Math.ceil(panelRect.right - mapRect.left) + 12);
+                if (panelRect.height < 1) return 0;
+                return Math.max(0, Math.ceil(mapRect.bottom - panelRect.top) + 12);
             }
 
             /* Page geometry follows the region being exported, so the map fills
@@ -1662,8 +1674,8 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                     height = Math.round(CFG.maxWidth / ratio);
                     width = CFG.maxWidth;
                 }
-                var padLeft = (scope === 'raster') ? colorStatsPadPx() : 0;
-                return {width: width + padLeft, height: height, padLeft: padLeft};
+                var padBottom = (scope === 'raster') ? colorStatsPadPx() : 0;
+                return {width: width, height: height + padBottom, padBottom: padBottom};
             }
 
             var saved = null;
@@ -1702,7 +1714,8 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                     center: map.getCenter(),
                     zoom: map.getZoom(),
                     cssText: container.style.cssText,
-                    bodyOverflow: document.body.style.overflow
+                    bodyOverflow: document.body.style.overflow,
+                    statsBand: null
                 };
                 document.documentElement.classList.add('pcvs-exporting');
                 map.closePopup();
@@ -1716,12 +1729,15 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                 }
                 map.invalidateSize({animate: false, pan: false});
                 var fitOpts = {animate: false, padding: [0, 0]};
-                if (scope === 'raster' && size.padLeft) {
+                if (scope === 'raster' && size.padBottom) {
                     fitOpts = {
                         animate: false,
-                        paddingTopLeft: [size.padLeft, 0],
-                        paddingBottomRight: [0, 0]
+                        paddingTopLeft: [0, 0],
+                        paddingBottomRight: [0, size.padBottom]
                     };
+                    var band = L.DomUtil.create('div', 'pcvs-export-stats-band', container);
+                    band.style.height = size.padBottom + 'px';
+                    saved.statsBand = band;
                 }
                 map.fitBounds(boundsFor(scope), fitOpts);
                 return size;
@@ -1731,6 +1747,9 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                 document.documentElement.classList.remove('pcvs-exporting');
                 hideVeil();
                 if (!saved) return;
+                if (saved.statsBand && saved.statsBand.parentNode) {
+                    saved.statsBand.parentNode.removeChild(saved.statsBand);
+                }
                 var container = map.getContainer();
                 container.style.cssText = saved.cssText;
                 document.body.style.overflow = saved.bodyOverflow;
