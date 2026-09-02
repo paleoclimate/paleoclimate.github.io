@@ -122,8 +122,40 @@ def overlay_png_for(html_path: Path) -> Path:
     return html_path.with_name('raster_overlay_' + name[len('map_'):]).with_suffix('.png')
 
 
+def pdf_path_for(html_path: Path, scope: str) -> Path:
+    return html_path.with_name(f'{html_path.stem}_{scope}.pdf')
+
+
+def pdf_files_for(html_path: Path) -> dict[str, Path]:
+    return {scope: pdf_path_for(html_path, scope) for scope in ('full', 'raster')}
+
+
+def is_valid_pdf(path: Path, min_bytes: int = 1000) -> bool:
+    if not path.is_file() or path.stat().st_size < min_bytes:
+        return False
+    with path.open('rb') as handle:
+        return handle.read(5) == b'%PDF-'
+
+
+def embedded_basins(html_text: str) -> list[str]:
+    """Parse the basin list Folium embeds in a generated map."""
+    match = re.search(r'var allBasins = (\[.*?]);', html_text)
+    if not match:
+        raise ValueError('Could not parse var allBasins from map HTML')
+    basins = json.loads(match.group(1))
+    if not isinstance(basins, list) or not basins:
+        raise ValueError('allBasins is empty')
+    return [str(name) for name in basins]
+
+
 def repo_url(base_url: str, relative: str) -> str:
     return f"{base_url.rstrip('/')}/{relative.lstrip('/')}"
+
+
+def _clear_page_errors(page) -> None:
+    errors = getattr(page, '_pcvs_errors', None)
+    if errors is not None:
+        errors.clear()
 
 
 def wait_viewer_ready(page, timeout: int = 60_000) -> None:
@@ -140,6 +172,7 @@ def wait_viewer_ready(page, timeout: int = 60_000) -> None:
         }""",
         timeout=timeout,
     )
+    _clear_page_errors(page)
 
 
 def wait_leaflet_ready(page, timeout: int = 60_000) -> None:
@@ -154,6 +187,7 @@ def wait_leaflet_ready(page, timeout: int = 60_000) -> None:
         }""",
         timeout=timeout,
     )
+    _clear_page_errors(page)
 
 
 def map_frame(page):
@@ -190,8 +224,17 @@ def goto_viewer(page, base_url: str, age: int | None = None) -> None:
     url = repo_url(base_url, 'index.html')
     if age is not None:
         url = f'{url}#age={age}'
-    page.goto(url, wait_until='domcontentloaded', timeout=60_000)
-    wait_viewer_ready(page)
+    last_error = None
+    for _ in range(3):
+        _clear_page_errors(page)
+        page.goto(url, wait_until='domcontentloaded', timeout=60_000)
+        try:
+            wait_viewer_ready(page)
+            return
+        except Exception as exc:
+            last_error = exc
+            page.wait_for_timeout(400)
+    raise last_error
 
 
 def boxes_overlap(a: dict, b: dict, slack: float = 1.0) -> bool:

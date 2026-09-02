@@ -12,11 +12,14 @@ from tests.helpers import (
     LAYER_NAMES,
     REPO_ROOT,
     catalog_ages,
+    embedded_basins,
     entry_for_age,
     idw_html_files,
+    is_valid_pdf,
     knn_html_files,
     load_maps_catalog,
     overlay_png_for,
+    pdf_files_for,
 )
 
 
@@ -181,3 +184,119 @@ def test_geotiffs_exist_for_catalog_ages():
         if not idw:
             missing.append(f'{age} Ma IDW-only GeoTIFF')
     assert not missing, 'Missing interpolated rasters:\n' + '\n'.join(missing)
+
+
+ACCENTED_BASINS = (
+    'Ceará',
+    'Espírito Santo',
+    'Jacuípe',
+    'Marajó',
+    'Pará-Maranhão',
+    'Paraná',
+    'Parnaíba',
+    'Pernambuco-Paraíba',
+    'Recôncavo',
+    'São Luís',
+    'Solimões',
+)
+
+BROKEN_BASIN_FRAGMENTS = (
+    'Cear?',
+    'Esp?rito Santo',
+    'Jacu?pe',
+    'Maraj?',
+    'Par?-Maranh?o',
+    'Paran?',
+    'Parna?ba',
+    'Para?ba',
+    'Rec?ncavo',
+    'S?o Lu?s',
+    'Solim?es',
+)
+
+
+def test_restore_lost_accents_repairs_basin_names():
+    import render_map as renderer
+
+    for broken, fixed in (
+        ('Cear?', 'Ceará'),
+        ('Par?-Maranh?o', 'Pará-Maranhão'),
+        ('S?o Lu?s', 'São Luís'),
+        ('S?o Lu?s-Graja?', 'São Luís-Grajaú'),
+        ('Pernambuco-Para?ba', 'Pernambuco-Paraíba'),
+        ('Rec?ncavo', 'Recôncavo'),
+        ('Solim?es', 'Solimões'),
+        ('Esp?rito Santo', 'Espírito Santo'),
+        ('Paran?', 'Paraná'),
+        ('Jatob?', 'Jatobá'),
+        ('Maraj?', 'Marajó'),
+        ('Neuqu?n', 'Neuquén'),
+        ('Ca?ad?n Asfalto', 'Cañadón Asfalto'),
+        ('Aur?s', 'Aurès'),
+        ('Santos', 'Santos'),
+        ('Potiguar', 'Potiguar'),
+    ):
+        assert renderer.restore_lost_accents(broken) == fixed
+
+
+def test_generated_maps_keep_basin_accents():
+    files = knn_html_files() + idw_html_files()
+    assert files, 'No generated maps to inspect'
+    seen = set()
+    broken = []
+    for path in files:
+        basins = embedded_basins(path.read_text(encoding='utf-8'))
+        seen.update(basins)
+        bad = [name for name in basins if '?' in name]
+        if bad:
+            broken.append(f'{path.name}: {bad}')
+    assert not broken, 'Basin names still lost their accents:\n' + '\n'.join(broken)
+    for name in ACCENTED_BASINS:
+        assert name in seen, f'{name} never appears in the generated maps'
+    for fragment in BROKEN_BASIN_FRAGMENTS:
+        assert fragment not in seen, f'Broken basin label still published: {fragment}'
+
+
+def test_every_html_and_pdf_map_was_generated():
+    knn = knn_html_files()
+    idw = idw_html_files()
+    assert knn, 'No KNN HTML maps; run python render_map.py --pdf'
+    assert idw, 'No IDW HTML maps; run python render_map.py --pdf'
+    catalog_paths = {entry['path'] for entry in load_maps_catalog()}
+    knn_paths = {path.relative_to(REPO_ROOT).as_posix() for path in knn}
+    assert catalog_paths == knn_paths
+
+    missing = []
+    for html in knn + idw:
+        if html.stat().st_size < 10_000:
+            missing.append(f'tiny HTML {html.relative_to(REPO_ROOT)}')
+        png = overlay_png_for(html)
+        if not png.is_file() or png.stat().st_size < 1000:
+            missing.append(f'missing overlay {png.name}')
+        for scope, pdf in pdf_files_for(html).items():
+            if not is_valid_pdf(pdf):
+                missing.append(f'missing/invalid {scope} PDF for {html.name}')
+    assert not missing, 'Maps were not generated successfully:\n' + '\n'.join(missing)
+
+
+def test_html_markers_use_the_published_point_size():
+    import render_map as renderer
+
+    files = knn_html_files() + idw_html_files()
+    assert files
+    radius = renderer.POINT_RADIUS_PX
+    weight = renderer.POINT_WEIGHT_PX
+    outer = renderer.POINT_OUTER_PX
+    broken = []
+    for path in files:
+        text = path.read_text(encoding='utf-8')
+        if f'"radius": {radius}' not in text:
+            broken.append(f'{path.name}: CircleMarker radius is not {radius}')
+        if f'"weight": {weight}' not in text:
+            broken.append(f'{path.name}: CircleMarker weight is not {weight}')
+        if 'climate-point-icon' in text:
+            icon_size = f'"iconSize": [{outer}, {outer}]'
+            icon_size_2 = f'"iconSize": [{outer:.2f}, {outer:.2f}]'
+            if icon_size not in text and icon_size_2 not in text:
+                broken.append(f'{path.name}: split-marker SVG is not {outer}px')
+    assert not broken, 'Point size drifted in generated HTML:\n' + '\n'.join(broken)

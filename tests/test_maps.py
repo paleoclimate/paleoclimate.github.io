@@ -238,6 +238,155 @@ def test_every_knn_map_file_loads_leaflet(page, base_url):
         assert page.locator('.leaflet-tile-pane, .leaflet-overlay-pane').count() >= 1
 
 
+MARKER_GEOMETRY = """
+() => {
+  const circles = [];
+  const icons = [];
+  for (const key of Object.keys(window)) {
+    const map = window[key];
+    if (!(map && typeof map.eachLayer === 'function' && map._container)) {
+      continue;
+    }
+    map.eachLayer(function(layer) {
+      if (!layer.eachLayer) return;
+      layer.eachLayer(function(child) {
+        if (child.options && typeof child.options.radius === 'number') {
+          const node = child.getElement && child.getElement();
+          const box = node ? node.getBoundingClientRect() : null;
+          circles.push({
+            radius: child.options.radius,
+            weight: child.options.weight,
+            className: child.options.className || '',
+            width: box ? box.width : null,
+            height: box ? box.height : null,
+          });
+        }
+        if (child._icon) {
+          const svg = child._icon.querySelector('svg');
+          if (svg) {
+            const box = svg.getBoundingClientRect();
+            icons.push({
+              width: parseFloat(svg.getAttribute('width')),
+              height: parseFloat(svg.getAttribute('height')),
+              box: box.width,
+            });
+          }
+        }
+      });
+    });
+  }
+  return {circles, icons};
+}
+"""
+
+
+def _assert_published_point_size(geometry):
+    import render_map as renderer
+
+    circles = geometry['circles']
+    icons = geometry['icons']
+    assert circles, 'No CircleMarker data points on the map'
+    for marker in circles:
+        assert marker['radius'] == renderer.POINT_RADIUS_PX
+        assert marker['weight'] == renderer.POINT_WEIGHT_PX
+        assert 'pcvs-point' in marker['className']
+        if marker['width'] is not None:
+            assert abs(marker['width'] - renderer.POINT_OUTER_PX) <= 2.5
+            assert abs(marker['height'] - renderer.POINT_OUTER_PX) <= 2.5
+    for icon in icons:
+        assert icon['width'] == renderer.POINT_OUTER_PX
+        assert icon['height'] == renderer.POINT_OUTER_PX
+        if icon['box']:
+            assert abs(icon['box'] - renderer.POINT_OUTER_PX) <= 2.5
+
+
+def test_basin_filter_shows_accented_names(page, base_url):
+    goto_viewer(page, base_url)
+    frame = map_frame(page)
+    panel = frame.locator('.basin-filter-control')
+    if not panel.evaluate("el => el.classList.contains('open')"):
+        panel.locator('.basin-filter-header').click()
+    names = [
+        text.strip()
+        for text in frame.locator('.basin-filter-list label').all_inner_texts()
+    ]
+    assert names
+    broken = [name for name in names if '?' in name]
+    assert not broken, f'Basin select still shows broken accents: {broken}'
+    joined = ' '.join(names)
+    assert any(mark in joined for mark in 'áãéíóúçêâñèïü'), (
+        'Basin select has no accented letters'
+    )
+
+
+def test_basin_select_filters_points(page, base_url):
+    goto_viewer(page, base_url)
+    frame = map_frame(page)
+    panel = frame.locator('.basin-filter-control')
+    if not panel.evaluate("el => el.classList.contains('open')"):
+        panel.locator('.basin-filter-header').click()
+
+    labels = frame.locator('.basin-filter-list label')
+    assert labels.count() >= 2
+
+    target = labels.first
+    for index in range(labels.count()):
+        text = labels.nth(index).inner_text().strip()
+        if any(mark in text for mark in 'áàâãéêíóôõúçñèïü'):
+            target = labels.nth(index)
+            break
+
+    checkbox = target.locator('input[type="checkbox"]')
+    name = checkbox.get_attribute('value')
+    assert name
+    assert '?' not in name
+
+    before = frame.locator('.basin-filter-count').inner_text().strip()
+    shown_before, total = [int(part) for part in before.replace(' ', '').split('/')]
+    assert shown_before == total
+    assert total > 0
+
+    checkbox.uncheck()
+    after = frame.locator('.basin-filter-count').inner_text().strip()
+    shown_after, total_after = [int(part) for part in after.replace(' ', '').split('/')]
+    assert total_after == total
+    assert shown_after < shown_before
+
+    checkbox.check()
+    restored = frame.locator('.basin-filter-count').inner_text().strip()
+    shown_restored, _ = [int(part) for part in restored.replace(' ', '').split('/')]
+    assert shown_restored == shown_before
+
+
+def test_data_point_size_on_html_and_pdf_export(page, base_url):
+    goto_viewer(page, base_url)
+    frame = map_frame(page)
+    geometry = frame.evaluate(MARKER_GEOMETRY)
+    _assert_published_point_size(geometry)
+
+    frame.evaluate("() => window.PCVS.beginExport({scope: 'full', resize: false, veil: false})")
+    exported = frame.evaluate(MARKER_GEOMETRY)
+    _assert_published_point_size(exported)
+    frame.evaluate("() => window.PCVS.endExport()")
+
+    frame.evaluate("() => window.PCVS.beginExport({scope: 'raster', resize: false, veil: false})")
+    raster = frame.evaluate(MARKER_GEOMETRY)
+    _assert_published_point_size(raster)
+    frame.evaluate("() => window.PCVS.endExport()")
+
+
+def test_pre_rendered_pdfs_are_served(page, base_url):
+    maps = load_maps_catalog()
+    entry = maps[len(maps) // 2]
+    assert entry.get('pdf'), f'{entry["path"]} has no PDF catalog entries'
+    for scope, href in entry['pdf'].items():
+        response = page.request.get(repo_url(base_url, href))
+        assert response.ok, f'{scope} PDF is not served: {href}'
+        body = response.body()
+        assert body.startswith(b'%PDF-'), href
+        assert len(body) > 1000, href
+
+
 @pytest.mark.slow
 def test_live_pdf_export_from_viewer(page, base_url):
     goto_viewer(page, base_url)
@@ -249,3 +398,5 @@ def test_live_pdf_export_from_viewer(page, base_url):
     body = download.path()
     if body:
         assert body.stat().st_size > 1000
+        header = body.read_bytes()[:5]
+        assert header == b'%PDF-'

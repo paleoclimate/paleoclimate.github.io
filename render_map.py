@@ -323,10 +323,207 @@ PALEO_REFERENCE_FRAME_CORRECTIONS = {
 }
 
 
+# Shapefile → GeoJSON export replaced every non-ASCII character with '?'.
+# Restore the original names (longest matches first) so basin labels, popups
+# and the basin filter show Portuguese, Spanish and French accents.
+_ACCENT_REPAIRS = {
+    'Pernambuco-Para?ba/Pernambuco': 'Pernambuco-Paraíba/Pernambuco',
+    'Pernambuco-Para?ba/Para?ba': 'Pernambuco-Paraíba/Paraíba',
+    'Neuqu?n (south back-arc basin)': 'Neuquén (south back-arc basin)',
+    'Bacia do Norte (=Paran? )': 'Bacia do Norte (=Paraná )',
+    'Calcaires sup?rieurs de Berriche': 'Calcaires supérieurs de Berriche',
+    'Marne ? gypse inf?rieures': 'Marne à gypse inférieures',
+    'Precordillera de Copiap?': 'Precordillera de Copiapó',
+    'Ba?ados de Caichig?e': 'Bañados de Caichigüe',
+    'Ca?ad?n de la Zorra': 'Cañadón de la Zorra',
+    'Ca?ad?n La Orientala': 'Cañadón La Orientala',
+    'Lago Colhu? Huapi': 'Lago Colhué Huapi',
+    'Ponta do Tubar?o Beds': 'Ponta do Tubarão Beds',
+    'Pernambuco-Para?ba': 'Pernambuco-Paraíba',
+    'S?o Lu?s-Graja?': 'São Luís-Grajaú',
+    'Par?-Maranh?o': 'Pará-Maranhão',
+    'Ca?ad?n Asfalto': 'Cañadón Asfalto',
+    'Esp?rito Santo': 'Espírito Santo',
+    'Bragan?a-Viseu': 'Bragança-Viseu',
+    'A?n El Guettar': 'Aïn El Guettar',
+    'A?n el Guettar': 'Aïn el Guettar',
+    'Anfiteatro de Tic?': 'Anfiteatro de Ticó',
+    'Barra de Iti?ba': 'Barra de Itiúba',
+    'Ilhas/ Massacar?': 'Ilhas/ Massacará',
+    'Pitanga- Carua?u': 'Pitanga- Caruaçu',
+    'Salvador/Massacar?': 'Salvador/Massacará',
+    'Santo Anast?cio': 'Santo Anastácio',
+    'S?o Sebasti?o': 'São Sebastião',
+    'Alter do Ch?o': 'Alter do Chão',
+    'Ca?adon Matasiete': 'Cañadon Matasiete',
+    'Cerro Casta?o': 'Cerro Castaño',
+    'Cull?n Grande': 'Cullín Grande',
+    'Jaguar?/Sernambi': 'Jaguaré/Sernambi',
+    'Miss?o Velha': 'Missão Velha',
+    'Pichi Neuqu?n': 'Pichi Neuquén',
+    'Pic?n Leuf?': 'Picún Leufú',
+    'Rio Tapirap?': 'Rio Tapirapé',
+    'Cha?arcillo': 'Chañarcillo',
+    'Florian?polis': 'Florianópolis',
+    'S?o Lu?s': 'São Luís',
+    'S?o Mateus': 'São Mateus',
+    'S?o Carlos': 'São Carlos',
+    'S?o Jos?': 'São José',
+    'Sidi A?ch': 'Sidi Aïch',
+    'Pe?as Altas': 'Peñas Altas',
+    'Can?da Sol?s': 'Cañada Solís',
+    'Can?da Solis': 'Cañada Solis',
+    'Rhoundja?a': 'Rhoundjaïa',
+    'Goitac?s?': 'Goitacás',
+    'Alc?ntara': 'Alcântara',
+    'Algod?es': 'Algodões',
+    'Atl?ntida': 'Atlântida',
+    'Barranqu?n': 'Barranquín',
+    'Carm?polis': 'Carmópolis',
+    'Celend?n': 'Celendín',
+    'Embor?': 'Emboré',
+    'Fahd?ne': 'Fahdène',
+    'Fah?ne': 'Fahène',
+    'Germ?nia': 'Germânia',
+    'Guich?n': 'Guichón',
+    'Huitr?n': 'Huitrín',
+    'Igrapi?na': 'Igrapiúna',
+    'Itamarac?': 'Itamaracá',
+    'Itanha?m': 'Itanhaém',
+    'Janda?ra': 'Jandaíra',
+    'Lefip?n': 'Lefipán',
+    'Mar?lia': 'Marília',
+    'Massarac?': 'Massacará',
+    'Massacar?': 'Massacará',
+    'Neuqu?n': 'Neuquén',
+    'Parna?ba': 'Parnaíba',
+    'Pend?ncia': 'Pendência',
+    'Pi?arras': 'Piçarras',
+    'Po?o Verde': 'Poço Verde',
+    'Pregui?as': 'Preguiças',
+    'Quissam?': 'Quissamã',
+    'Rec?ncavo': 'Recôncavo',
+    'Reg?ncia': 'Regência',
+    'Serinha?m': 'Serinhaém',
+    'Solim?es': 'Solimões',
+    'Tacuaremb?': 'Tacuarembó',
+    'Tramanda?': 'Tramandaí',
+    'Tr?s Barras': 'Três Barras',
+    'Ara?atuba': 'Araçatuba',
+    'Bragan?a': 'Bragança',
+    'Burg?ita': 'Burgüita',
+    'Cabi?nas': 'Cabiúnas',
+    'Cassipor?': 'Cassiporé',
+    'Graja?': 'Grajaú',
+    'Guamar?': 'Guamaré',
+    'Guaruj?': 'Guarujá',
+    'Ilh?us': 'Ilhéus',
+    'Ita?nas': 'Itaúnas',
+    'Itai?nas': 'Itaúnas',
+    'Itacar?': 'Itacaré',
+    'Itapag?': 'Itapagí',
+    'Ita?pe': 'Itaípe',
+    'Jacu?pe': 'Jacuípe',
+    'Jaguar?': 'Jaguaré',
+    'Macei?': 'Maceió',
+    'Maraj?': 'Marajó',
+    'Mara?on': 'Marañón',
+    'Munda?': 'Mundaú',
+    'Pabell?n': 'Pabellón',
+    'Paran?': 'Paraná',
+    'Po??o': 'Poção',
+    'Potos?': 'Potosí',
+    'Quiric?': 'Quiricó',
+    'Rio ?vila': 'Rio Ávila',
+    'R?o Mayer': 'Río Mayer',
+    'R?o Chico': 'Río Chico',
+    'Tinhar?': 'Tinharé',
+    'Trair?': 'Trairí',
+    'Tut?ia': 'Tutóia',
+    'Alian?a': 'Aliança',
+    'Anaj?s': 'Anajás',
+    'Ap?n': 'Apón',
+    'Aur?s': 'Aurès',
+    'Avil?': 'Avilé',
+    'Azil?': 'Azilé',
+    'Baquer?': 'Baqueró',
+    'Caiu?': 'Caiuá',
+    'Caju?': 'Cajuá',
+    'Can?rias': 'Canárias',
+    'Cear?': 'Ceará',
+    'Chim?': 'Chimú',
+    'Cod?': 'Codó',
+    'Col?n': 'Colón',
+    'Cricar?': 'Cricaré',
+    'Garc?a': 'García',
+    'Garga?': 'Gargaú',
+    'Goio Er?': 'Goio Erê',
+    'Guar?': 'Guará',
+    'Huar?n': 'Huarón',
+    'Imb?': 'Imbé',
+    'Jag?el': 'Jagüel',
+    'Jatob?': 'Jatobá',
+    'Maca?': 'Macaé',
+    'Malarg?e': 'Malargüe',
+    'Mut?': 'Mutá',
+    'Oy?n': 'Oyón',
+    'Peri?': 'Periá',
+    'Pia?abu?u': 'Piaçabuçu',
+    'Pich?': 'Piché',
+    'Rembou?': 'Remboué',
+    'Rinc?n': 'Rincón',
+    'Tau?': 'Tauá',
+    'Tib?': 'Tibí',
+    'Vi?ita': 'Viñita',
+    'A?u': 'Açu',
+    '?gua Grande': 'Água Grande',
+    'Travossas?': 'Travessas',
+    'Para?ba': 'Paraíba',
+    'Maranh?o': 'Maranhão',
+    'Esp?rito': 'Espírito',
+    'Ca?ad?n': 'Cañadón',
+    'Ca?adon': 'Cañadon',
+    'Ch?o': 'Chão',
+    'S?o': 'São',
+    'Lu?s': 'Luís',
+    'Jos?': 'José',
+    'Par?': 'Pará',
+    'R?o ': 'Río ',
+}
+
+_ACCENT_REPAIR_ITEMS = tuple(
+    sorted(_ACCENT_REPAIRS.items(), key=lambda item: len(item[0]), reverse=True)
+)
+
+
+def restore_lost_accents(text):
+    """Put back accents that the GeoJSON export stored as '?'."""
+    if not isinstance(text, str) or '?' not in text:
+        return text
+    repaired = text
+    for broken, fixed in _ACCENT_REPAIR_ITEMS:
+        if broken in repaired:
+            repaired = repaired.replace(broken, fixed)
+    return repaired
+
+
+def restore_geojson_accents(data):
+    """Repair accented text on every string property of a GeoJSON object."""
+    for feature in data.get('features', []):
+        props = feature.get('properties')
+        if not isinstance(props, dict):
+            continue
+        for key, value in props.items():
+            if isinstance(value, str) and '?' in value:
+                props[key] = restore_lost_accents(value)
+    return data
+
+
 def load_geojson(filepath):
-    """Load a GeoJSON file."""
+    """Load a GeoJSON file and restore lost accents on text fields."""
     with open(filepath, 'r', encoding='utf-8') as f:
-        return json.load(f)
+        data = json.load(f)
+    return restore_geojson_accents(data)
 
 
 def apply_euler_rotation(lon, lat, pole_lat_deg, pole_lon_deg, angle_deg):
@@ -561,6 +758,13 @@ MARKER_STROKE_COLOR = '#16253a'
 MARKER_HALO = ('drop-shadow(0 0 1.3px rgba(255, 255, 255, 0.95)) '
                'drop-shadow(0 0.5px 1px rgba(15, 23, 42, 0.3))')
 
+# Pixel geometry of every data point (CircleMarker and split SVG icons).
+# Leaflet CircleMarker radius is in CSS pixels and does not change with zoom;
+# PDF export prints the same markers, so HTML and PDF stay in lockstep.
+POINT_RADIUS_PX = 3.5
+POINT_WEIGHT_PX = 1.15
+POINT_OUTER_PX = 2 * POINT_RADIUS_PX + POINT_WEIGHT_PX
+
 
 def _climate_name(code):
     """Spell out a climate code for popups, e.g. 'H' -> 'Humid (H)'."""
@@ -584,7 +788,8 @@ def resolve_marker_climates(climates):
     return [c for c in _CLIMATE_DISPLAY_ORDER if counts.get(c) == max_count]
 
 
-def climate_marker_icon_html(climates_tied, color_map, radius_px=3.5, weight_px=1.15,
+def climate_marker_icon_html(climates_tied, color_map, radius_px=POINT_RADIUS_PX,
+                             weight_px=POINT_WEIGHT_PX,
                              opacity=MARKER_FILL_OPACITY):
     """Build a multi-color DivIcon SVG matching Folium CircleMarker geometry.
 
@@ -1980,8 +2185,8 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     # Marker geometry. The same radius and stroke drive solid CircleMarkers, the
     # multi-climate SVG icons and the PDF export, so every point on the map is
     # the same size no matter how many records share the location.
-    point_radius_px = 3.5
-    point_weight = 1.15
+    point_radius_px = POINT_RADIUS_PX
+    point_weight = POINT_WEIGHT_PX
     color_map = CLIMATE_COLORS
     
     # Group features by coordinate so overlapping points share a single marker
