@@ -22,13 +22,42 @@ pip install -r requirements.txt
 
 ## Usage
 
-Run the script to generate the interactive map (KNN + IDW):
+Run the script to generate the interactive maps (KNN + IDW). The published
+parameter set is:
 
 ```bash
-python render_map.py
+python render_map.py --power 4.0 --gradient-sharp 18.0 --kdtree
 ```
 
-This will create an HTML file named `map_110_ma.html` that you can open in any web browser.
+This writes GeoTIFFs, one interactive HTML map per age, and regenerates `index.html`.
+
+## Verify after changes
+
+After changing the renderer, the viewer, or the comparison pages, regenerate
+maps if needed and run the UI/UX suite. The suite starts a local server, opens
+Chromium, and exercises the viewer, every generated map, and the comparison tools.
+
+```bash
+# Maps already on disk: just run the tests
+python verify.py
+
+# After a renderer change: generate the published maps, then test
+python verify.py --generate --power 4.0 --gradient-sharp 18.0 --kdtree
+
+# Generate only one age, then test
+python verify.py --generate --map 110 --power 4.0 --gradient-sharp 18.0 --kdtree
+```
+
+The first run may need Playwright's browser:
+
+```bash
+pip install -r requirements.txt
+python -m playwright install chromium
+```
+
+`python verify.py --headed` shows the browser. `python verify.py --slow` also
+runs live PDF export. Extra pytest flags go after `--`, for example
+`python verify.py -- tests/test_viewer.py -k combo`.
 
 ## Data Layers
 
@@ -46,6 +75,8 @@ This will create an HTML file named `map_110_ma.html` that you can open in any w
 ## Files
 
 - `render_map.py`: Main script to generate the map
+- `verify.py`: Generate maps (optional) and run the UI/UX regression suite
+- `tests/`: Playwright + pytest coverage for the viewer, maps, and comparison pages
 - `requirements.txt`: Python package dependencies
 - `GEOJSON/`: Contains GeoJSON files with point and coastline data
 - `GEOTIFF/`: Contains GeoTIFF raster files

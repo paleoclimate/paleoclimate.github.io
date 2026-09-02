@@ -4,8 +4,9 @@ numpy>=1.24.0
 Pillow>=9.5.0
 matplotlib>=3.7.0
 scipy>=1.10.0
-# For PDF export (python render_map.py --pdf):
+# For PDF export (python render_map.py --pdf) and the UI/UX suite (python verify.py):
 playwright>=1.40.0
+pytest>=8.0.0
 # For color classification on raster PNGs
 opencv-python-headless>=4.9.0
 # Optional: RAM (RSS) metrics; on Linux /proc is used when absent
