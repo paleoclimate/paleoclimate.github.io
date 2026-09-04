@@ -137,10 +137,10 @@ PDF_BASE_HEIGHT_PX = 900
 PDF_MIN_WIDTH_PX = 640
 PDF_MAX_WIDTH_PX = 2200
 
-# Client-side export dependencies, loaded on demand from a CDN. html-to-image
-# rasterises through the browser's own renderer (an SVG foreignObject), which is
-# why it reproduces Leaflet's transformed vector panes; html2canvas reimplements
-# layout and drops the markers and coastlines in the wrong place.
+# Client-side export dependencies, loaded on demand from a CDN.
+# The full-map PDF is drawn as vectors (circles, coastlines) so the points
+# stay editable. html-to-image is only used for the raster-only crop, which
+# may stay a bitmap, and for the small coverage panel on a vector page.
 HTML_TO_IMAGE_URL = 'https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js'
 JSPDF_URL = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js'
 
@@ -1482,6 +1482,7 @@ def _add_graticule(map_obj, interval=30):
 
             map.on('moveend', updateLabels);
             map.whenReady(function() {{ setTimeout(updateLabels, 300); }});
+            updateLabels();
         }})();
         {{% endmacro %}}
     """
@@ -1787,6 +1788,17 @@ MAP_THEME_CSS = """
             -webkit-backdrop-filter: none !important;
             backdrop-filter: none !important;
             background: #ffffff !important;
+            box-shadow: none !important;
+        }
+        /* CSS filters flatten every data point into a small bitmap when
+           Chromium prints. The halo is a screen affordance; the PDF keeps
+           the dark stroke so the circles stay editable paths. */
+        .pcvs-exporting path.pcvs-point,
+        .pcvs-exporting .climate-point-icon svg {
+            filter: none !important;
+        }
+        .pcvs-exporting .graticule-label span {
+            text-shadow: none !important;
         }
     </style>
     {% endmacro %}
@@ -1822,10 +1834,10 @@ def _script_macro(map_obj, body, **substitutions):
 def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
     """Expose ``window.PCVS``, the export entry point used by page and toolbar.
 
-    The API frames the map on a chosen region, strips interactive chrome and
-    renders what is left. It is what both export paths go through: the browser
-    (client side, so the current layer toggles are honoured) and Playwright
-    (which reuses the framing, then prints the page to a vector PDF).
+    The API frames the map on a chosen region and strips interactive chrome.
+    Both export paths reuse that framing: Playwright then prints the page
+    (vector points, raster surface as an image) and the viewer button draws
+    the same layers into a jsPDF document so a live download stays editable.
     """
     config = json.dumps({
         'rasterBounds': raster_bounds,
@@ -1837,6 +1849,8 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
         'background': MAP_BACKGROUND,
         'htmlToImage': HTML_TO_IMAGE_URL,
         'jspdf': JSPDF_URL,
+        'pointRadius': POINT_RADIUS_PX,
+        'pointWeight': POINT_WEIGHT_PX,
     }, ensure_ascii=False)
 
     _script_macro(map_obj, """
@@ -2005,8 +2019,311 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                 return chain;
             }
 
-            /* Renders the map exactly as it currently stands — including which
-               layers the user left checked — and returns the PDF bytes. */
+            var PX = 0.75;
+
+            function hexRgb(color) {
+                if (!color) return [0, 0, 0];
+                color = String(color).trim();
+                var rgb = color.match(/^rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/i);
+                if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+                var hex = color.replace('#', '');
+                if (hex.length === 3) {
+                    hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+                }
+                if (hex.length < 6) return [0, 0, 0];
+                return [
+                    parseInt(hex.slice(0, 2), 16),
+                    parseInt(hex.slice(2, 4), 16),
+                    parseInt(hex.slice(4, 6), 16)
+                ];
+            }
+
+            function newPdf(size) {
+                var ptW = size.width * PX;
+                var ptH = size.height * PX;
+                return new window.jspdf.jsPDF({
+                    orientation: ptW >= ptH ? 'landscape' : 'portrait',
+                    unit: 'pt',
+                    format: [ptW, ptH],
+                    compress: true
+                });
+            }
+
+            function collectLayers() {
+                var rasters = [];
+                var lines = [];
+                var circles = [];
+                var pies = [];
+                var labels = [];
+                function walk(layer) {
+                    if (layer.eachLayer) {
+                        layer.eachLayer(walk);
+                        return;
+                    }
+                    if (!layer._map) return;
+                    if (layer instanceof L.ImageOverlay) {
+                        rasters.push(layer);
+                        return;
+                    }
+                    if (layer instanceof L.CircleMarker) {
+                        circles.push(layer);
+                        return;
+                    }
+                    if (layer instanceof L.Polyline) {
+                        lines.push(layer);
+                        return;
+                    }
+                    if (!layer._icon) return;
+                    if (layer._icon.classList.contains('graticule-label')) {
+                        labels.push(layer);
+                        return;
+                    }
+                    if (layer._icon.querySelector('svg')) pies.push(layer);
+                }
+                map.eachLayer(walk);
+                return {
+                    rasters: rasters,
+                    lines: lines,
+                    circles: circles,
+                    pies: pies,
+                    labels: labels
+                };
+            }
+
+            function flattenRings(latlngs) {
+                if (!latlngs || !latlngs.length) return [];
+                var first = latlngs[0];
+                if (first && first.lat !== undefined) return [latlngs];
+                var rings = [];
+                for (var i = 0; i < latlngs.length; i++) {
+                    rings = rings.concat(flattenRings(latlngs[i]));
+                }
+                return rings;
+            }
+
+            function setOpacity(doc, opacity) {
+                if (typeof doc.GState !== 'function') return;
+                doc.setGState(new doc.GState({opacity: opacity}));
+            }
+
+            function imageDataUrl(img) {
+                if (!img) return Promise.resolve(null);
+                var src = img.currentSrc || img.src || '';
+                if (src.indexOf('data:image/') === 0) return Promise.resolve(src);
+                try {
+                    var canvas = document.createElement('canvas');
+                    canvas.width = img.naturalWidth || img.width;
+                    canvas.height = img.naturalHeight || img.height;
+                    if (!canvas.width || !canvas.height) return Promise.resolve(null);
+                    canvas.getContext('2d').drawImage(img, 0, 0);
+                    return Promise.resolve(canvas.toDataURL('image/png'));
+                } catch (err) {
+                    return Promise.resolve(null);
+                }
+            }
+
+            function drawRasters(doc, rasters) {
+                var chain = Promise.resolve();
+                rasters.forEach(function(layer) {
+                    chain = chain.then(function() {
+                        return imageDataUrl(layer.getElement && layer.getElement());
+                    }).then(function(url) {
+                        if (!url || !layer.getBounds) return;
+                        var bounds = layer.getBounds();
+                        var nw = map.latLngToContainerPoint(bounds.getNorthWest());
+                        var se = map.latLngToContainerPoint(bounds.getSouthEast());
+                        var opacity = (layer.options && layer.options.opacity != null)
+                            ? layer.options.opacity : 1;
+                        setOpacity(doc, opacity);
+                        doc.addImage(
+                            url, 'PNG',
+                            nw.x * PX, nw.y * PX,
+                            (se.x - nw.x) * PX, (se.y - nw.y) * PX
+                        );
+                        setOpacity(doc, 1);
+                    });
+                });
+                return chain;
+            }
+
+            function drawPolyline(doc, layer) {
+                var opt = layer.options || {};
+                var color = hexRgb(opt.color || '#334155');
+                var weight = (opt.weight != null ? opt.weight : 1) * PX;
+                var opacity = opt.opacity != null ? opt.opacity : 1;
+                var closed = (typeof L.Polygon === 'function' && layer instanceof L.Polygon);
+                doc.setDrawColor(color[0], color[1], color[2]);
+                doc.setLineWidth(Math.max(0.15, weight));
+                if (doc.setLineCap) doc.setLineCap(opt.lineCap || 'round');
+                if (doc.setLineJoin) doc.setLineJoin(opt.lineJoin || 'round');
+                if (doc.setLineDashPattern) {
+                    if (opt.dashArray) {
+                        var dash = String(opt.dashArray).split(/[\\s,]+/).map(Number)
+                            .filter(function(n) { return isFinite(n); })
+                            .map(function(n) { return n * PX; });
+                        doc.setLineDashPattern(dash, 0);
+                    } else {
+                        doc.setLineDashPattern([], 0);
+                    }
+                }
+                setOpacity(doc, opacity);
+                flattenRings(layer.getLatLngs()).forEach(function(ring) {
+                    if (ring.length < 2) return;
+                    var start = map.latLngToContainerPoint(ring[0]);
+                    var deltas = [];
+                    var prev = start;
+                    for (var i = 1; i < ring.length; i++) {
+                        var point = map.latLngToContainerPoint(ring[i]);
+                        deltas.push([(point.x - prev.x) * PX, (point.y - prev.y) * PX]);
+                        prev = point;
+                    }
+                    doc.lines(deltas, start.x * PX, start.y * PX, [1, 1], 'S', closed);
+                });
+                setOpacity(doc, 1);
+                if (doc.setLineDashPattern) doc.setLineDashPattern([], 0);
+            }
+
+            function drawCircle(doc, layer) {
+                var latlng = layer.getLatLng();
+                var point = map.latLngToContainerPoint(latlng);
+                var radius = (layer.options.radius || CFG.pointRadius) * PX;
+                var weight = (layer.options.weight != null ? layer.options.weight : CFG.pointWeight) * PX;
+                var fill = hexRgb(layer.options.fillColor || layer.options.color || '#94a3b8');
+                var stroke = hexRgb(layer.options.color || '#16253a');
+                var fillOp = layer.options.fillOpacity != null ? layer.options.fillOpacity : 1;
+                setOpacity(doc, fillOp);
+                doc.setFillColor(fill[0], fill[1], fill[2]);
+                doc.setDrawColor(stroke[0], stroke[1], stroke[2]);
+                doc.setLineWidth(Math.max(0.15, weight));
+                if (doc.setLineDashPattern) doc.setLineDashPattern([], 0);
+                doc.circle(point.x * PX, point.y * PX, radius, 'FD');
+                setOpacity(doc, 1);
+            }
+
+            function drawPie(doc, layer) {
+                var svg = layer._icon && layer._icon.querySelector('svg');
+                if (!svg) return;
+                var paths = svg.querySelectorAll('path');
+                var fills = [];
+                for (var i = 0; i < paths.length; i++) {
+                    fills.push(hexRgb(paths[i].getAttribute('fill') || '#94a3b8'));
+                }
+                if (!fills.length) return;
+                var circle = svg.querySelector('circle');
+                var radiusPx = circle ? parseFloat(circle.getAttribute('r')) : CFG.pointRadius;
+                var weightPx = circle ? parseFloat(circle.getAttribute('stroke-width')) : CFG.pointWeight;
+                var stroke = hexRgb(
+                    (circle && circle.getAttribute('stroke')) || '#16253a'
+                );
+                var point = map.latLngToContainerPoint(layer.getLatLng());
+                var x = point.x * PX;
+                var y = point.y * PX;
+                var radius = radiusPx * PX;
+                var start = -Math.PI / 2;
+                var slice = (Math.PI * 2) / fills.length;
+                for (var s = 0; s < fills.length; s++) {
+                    var a0 = start + s * slice;
+                    var a1 = start + (s + 1) * slice;
+                    var steps = Math.max(8, Math.ceil(Math.abs(a1 - a0) / (Math.PI / 12)));
+                    var originX = x;
+                    var originY = y;
+                    var deltas = [];
+                    var prevX = originX;
+                    var prevY = originY;
+                    for (var t = 0; t <= steps; t++) {
+                        var angle = a0 + (a1 - a0) * (t / steps);
+                        var nx = x + radius * Math.cos(angle);
+                        var ny = y + radius * Math.sin(angle);
+                        deltas.push([nx - prevX, ny - prevY]);
+                        prevX = nx;
+                        prevY = ny;
+                    }
+                    doc.setFillColor(fills[s][0], fills[s][1], fills[s][2]);
+                    doc.lines(deltas, originX, originY, [1, 1], 'F', true);
+                }
+                doc.setDrawColor(stroke[0], stroke[1], stroke[2]);
+                doc.setLineWidth(Math.max(0.15, weightPx * PX));
+                doc.circle(x, y, radius, 'S');
+            }
+
+            function drawLabel(doc, layer) {
+                var node = layer._icon && layer._icon.querySelector('span');
+                var text = node ? String(node.textContent || '').trim() : '';
+                if (!text || !layer._icon) return;
+                var box = layer._icon.getBoundingClientRect();
+                var origin = map.getContainer().getBoundingClientRect();
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(9.5 * PX);
+                doc.setTextColor(85, 100, 122);
+                doc.text(text, (box.left - origin.left) * PX,
+                         (box.top - origin.top + box.height * 0.72) * PX);
+            }
+
+            function drawColorStats(doc) {
+                var panel = map.getContainer().querySelector('.color-stats-control');
+                if (!panel || !panel.getClientRects().length || !window.htmlToImage) {
+                    return Promise.resolve();
+                }
+                var box = panel.getBoundingClientRect();
+                var origin = map.getContainer().getBoundingClientRect();
+                return window.htmlToImage.toPng(panel, {
+                    backgroundColor: '#ffffff',
+                    pixelRatio: 2,
+                    cacheBust: false
+                }).then(function(url) {
+                    doc.addImage(
+                        url, 'PNG',
+                        (box.left - origin.left) * PX,
+                        (box.top - origin.top) * PX,
+                        box.width * PX,
+                        box.height * PX
+                    );
+                }).catch(function() { return null; });
+            }
+
+            function composeVectorPdf(scope, size) {
+                var doc = newPdf(size);
+                var bg = hexRgb(CFG.background);
+                doc.setFillColor(bg[0], bg[1], bg[2]);
+                doc.rect(0, 0, size.width * PX, size.height * PX, 'F');
+                var layers = collectLayers();
+                return drawRasters(doc, layers.rasters).then(function() {
+                    layers.lines.forEach(function(layer) { drawPolyline(doc, layer); });
+                    layers.circles.forEach(function(layer) { drawCircle(doc, layer); });
+                    layers.pies.forEach(function(layer) { drawPie(doc, layer); });
+                    layers.labels.forEach(function(layer) { drawLabel(doc, layer); });
+                    return drawColorStats(doc);
+                }).then(function() {
+                    return {
+                        buffer: doc.output('arraybuffer'),
+                        filename: CFG.basename + '_' + scope + '.pdf'
+                    };
+                });
+            }
+
+            function composeBitmapPdf(scope, size) {
+                var ratio = Math.min(3, Math.max(1.5, 3600 / size.width));
+                return window.htmlToImage.toCanvas(map.getContainer(), {
+                    backgroundColor: CFG.background,
+                    width: size.width,
+                    height: size.height,
+                    pixelRatio: ratio,
+                    cacheBust: false
+                }).then(function(canvas) {
+                    var doc = newPdf(size);
+                    doc.addImage(
+                        canvas.toDataURL('image/jpeg', 0.95), 'JPEG',
+                        0, 0, size.width * PX, size.height * PX, undefined, 'FAST'
+                    );
+                    return {
+                        buffer: doc.output('arraybuffer'),
+                        filename: CFG.basename + '_' + scope + '.pdf'
+                    };
+                });
+            }
+
+            /* Full-map downloads stay vector so points can be edited. The
+               raster-only crop may stay a bitmap, matching the published pair. */
             function exportPdf(options) {
                 options = options || {};
                 var scope = options.scope === 'raster' ? 'raster' : 'full';
@@ -2016,30 +2333,12 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                     size = beginExport({scope: scope, veil: true});
                     return settled();
                 }).then(function() {
-                    var ratio = Math.min(3, Math.max(1.5, 3600 / size.width));
-                    return window.htmlToImage.toCanvas(map.getContainer(), {
-                        backgroundColor: CFG.background,
-                        width: size.width,
-                        height: size.height,
-                        pixelRatio: ratio,
-                        cacheBust: false
-                    });
-                }).then(function(canvas) {
+                    return scope === 'raster'
+                        ? composeBitmapPdf(scope, size)
+                        : composeVectorPdf(scope, size);
+                }).then(function(result) {
                     endExport();
-                    var ptW = size.width * 0.75;
-                    var ptH = size.height * 0.75;
-                    var doc = new window.jspdf.jsPDF({
-                        orientation: ptW >= ptH ? 'landscape' : 'portrait',
-                        unit: 'pt',
-                        format: [ptW, ptH],
-                        compress: true
-                    });
-                    doc.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG',
-                                 0, 0, ptW, ptH, undefined, 'FAST');
-                    return {
-                        buffer: doc.output('arraybuffer'),
-                        filename: CFG.basename + '_' + scope + '.pdf'
-                    };
+                    return result;
                 }).catch(function(err) {
                     endExport();
                     throw err;
@@ -2640,9 +2939,6 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     # Add measure tool
     plugins.MeasureControl().add_to(m)
 
-    # Add coordinate graticule (always visible, 30° intervals)
-    _add_graticule(m, interval=30)
-
     # Fit bounds to raster extent (tightest framing around interpolated area)
     raster_bounds = None
     if geotiff_path and os.path.exists(geotiff_path):
@@ -2654,6 +2950,9 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
         m.fit_bounds(raster_bounds)
     elif full_bounds:
         m.fit_bounds(full_bounds)
+
+    # After fitBounds so the first label pass sees the published framing.
+    _add_graticule(m, interval=30)
 
     _add_export_api(
         m,
@@ -2700,9 +2999,9 @@ class PdfExporter:
     """Render generated maps to PDF, reusing one headless browser.
 
     Framing, chrome hiding and page geometry all come from ``window.PCVS``, the
-    same API the in-browser export button uses, so a downloaded PDF and a
-    pre-rendered one show the map the same way. Markers, strokes and panels are
-    left exactly as the map draws them on screen.
+    same API the in-browser export button uses. Playwright then prints the
+    framed page: CSS filters are off while exporting, so data points stay
+    vector circles instead of one small bitmap each.
     """
 
     def __init__(self, wait_seconds=1.5):
@@ -2775,6 +3074,19 @@ class PdfExporter:
                 'scope => window.PCVS.beginExport({scope: scope, resize: false})',
                 scope,
             )
+            # Drop CSS filters that Chromium would flatten into one bitmap
+            # per CircleMarker. The same rules live in the map theme; this
+            # keeps older generated HTML exportable as vector points too.
+            page.add_style_tag(content=(
+                '.pcvs-exporting path.pcvs-point,'
+                '.pcvs-exporting .climate-point-icon svg'
+                '{ filter: none !important; }'
+                '.pcvs-exporting .graticule-label span'
+                '{ text-shadow: none !important; }'
+                '.pcvs-exporting .pcvs-panel,'
+                '.pcvs-exporting .leaflet-bar'
+                '{ box-shadow: none !important; }'
+            ))
             page.evaluate('() => window.PCVS.settled()')
             page.wait_for_timeout(int(self.wait_seconds * 1000))
 
@@ -3483,8 +3795,8 @@ function downloadPrerendered(scope) {
   return true;
 }
 
-/* The frame renders itself, so the PDF carries exactly the layers, filters and
-   styling on screen at that moment. */
+/* The frame renders itself. A full-map download is drawn as vectors so the
+   data points stay editable; the raster-only crop may stay a bitmap. */
 function exportLive(scope) {
   var target = frame.contentWindow;
   if (!target) return Promise.reject(new Error('Map frame is not ready'));

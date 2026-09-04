@@ -137,6 +137,75 @@ def is_valid_pdf(path: Path, min_bytes: int = 1000) -> bool:
         return handle.read(5) == b'%PDF-'
 
 
+# Chromium used to stamp every drop-shadowed CircleMarker as an ~80px image.
+# Dique edits those points in Illustrator, so they have to be path operators.
+_PDF_IMAGE_SIZE = re.compile(
+    rb'/Subtype\s*/Image\s*/Width\s+(\d+)\s*/Height\s+(\d+)'
+)
+_PDF_CUBIC = re.compile(rb'(?:[-+]?[\d.]+(?:[eE][-+]?\d+)?\s+){6}c\b')
+_PDF_STREAM = re.compile(rb'stream\r?\n(.*?)\r?\nendstream', re.S)
+_POINT_STAMP_MIN = 70
+_POINT_STAMP_MAX = 90
+
+
+def inspect_pdf_vectors(path: Path) -> dict:
+    """Summarize bitmap stamps vs cubic Bézier drawing in a PDF.
+
+    A full-map export that Dique can edit has many cubic curves (circles and
+    coastlines) and no cluster of ~80×80 images, one per data point.
+    """
+    import zlib
+
+    data = path.read_bytes()
+    images = [
+        (int(width), int(height))
+        for width, height in _PDF_IMAGE_SIZE.findall(data)
+    ]
+    point_stamps = sum(
+        1
+        for width, height in images
+        if (
+            _POINT_STAMP_MIN <= width <= _POINT_STAMP_MAX
+            and _POINT_STAMP_MIN <= height <= _POINT_STAMP_MAX
+        )
+    )
+    curves = 0
+    for match in _PDF_STREAM.finditer(data):
+        raw = match.group(1)
+        try:
+            decompressed = zlib.decompress(raw)
+        except Exception:
+            decompressed = raw
+        if decompressed.startswith(b'\xff\xd8') or decompressed.startswith(b'\x89PNG'):
+            continue
+        curves += len(_PDF_CUBIC.findall(decompressed))
+    return {
+        'images': len(images),
+        'point_stamps': point_stamps,
+        'cubic_curves': curves,
+        'sizes': images,
+    }
+
+
+def assert_pdf_points_are_vector(path: Path) -> None:
+    """Fail if ``path`` flattened the data points into small bitmaps."""
+    assert is_valid_pdf(path), f'{path} is not a PDF'
+    stats = inspect_pdf_vectors(path)
+    assert stats['point_stamps'] == 0, (
+        f'{path.name} still stamps data points as bitmaps '
+        f'({stats["point_stamps"]} images between '
+        f'{_POINT_STAMP_MIN}px and {_POINT_STAMP_MAX}px). '
+        'Open the full-map PDF in Illustrator or Inkscape: each climate '
+        'point should be a selectable circle or path, not a placed image.'
+    )
+    assert stats['cubic_curves'] >= 80, (
+        f'{path.name} has too little vector path data '
+        f'({stats["cubic_curves"]} cubic curves). '
+        'The full map should keep coastlines and points as vectors; '
+        'only the interpolated raster may stay an embedded image.'
+    )
+
+
 def embedded_basins(html_text: str) -> list[str]:
     """Parse the basin list Folium embeds in a generated map."""
     match = re.search(r'var allBasins = (\[.*?]);', html_text)
