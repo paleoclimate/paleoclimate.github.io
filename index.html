@@ -554,8 +554,8 @@ function downloadPrerendered(scope) {
   return true;
 }
 
-/* The frame renders itself, so the PDF carries exactly the layers, filters and
-   styling on screen at that moment. */
+/* The frame renders itself. A full-map download is drawn as vectors so the
+   data points stay editable; the raster-only crop may stay a bitmap. */
 function exportLive(scope) {
   var target = frame.contentWindow;
   if (!target) return Promise.reject(new Error('Map frame is not ready'));
