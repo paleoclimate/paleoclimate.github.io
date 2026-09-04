@@ -11,6 +11,7 @@ from tests.helpers import (
     KNN_DIR,
     LAYER_NAMES,
     REPO_ROOT,
+    assert_pdf_points_are_vector,
     catalog_ages,
     embedded_basins,
     entry_for_age,
@@ -277,6 +278,33 @@ def test_every_html_and_pdf_map_was_generated():
             if not is_valid_pdf(pdf):
                 missing.append(f'missing/invalid {scope} PDF for {html.name}')
     assert not missing, 'Maps were not generated successfully:\n' + '\n'.join(missing)
+
+
+def test_export_api_keeps_full_map_points_as_vectors():
+    source = (REPO_ROOT / 'render_map.py').read_text(encoding='utf-8')
+    assert 'composeVectorPdf' in source
+    assert 'doc.circle' in source
+    assert 'composeBitmapPdf' in source
+    assert "scope === 'raster'" in source
+    assert 'pcvs-exporting path.pcvs-point' in source
+    assert 'filter: none !important' in source
+    assert 'htmlToImage.toCanvas(map.getContainer()' in source
+    assert 'composeVectorPdf(scope, size)' in source
+
+
+def test_full_pdfs_keep_data_points_as_vectors():
+    files = knn_html_files() + idw_html_files()
+    assert files, 'No generated maps; run python render_map.py --pdf'
+    broken = []
+    for html in files:
+        pdf = pdf_files_for(html)['full']
+        try:
+            assert_pdf_points_are_vector(pdf)
+        except AssertionError as exc:
+            broken.append(str(exc))
+    assert not broken, (
+        'Full-map PDFs flattened the data points:\n' + '\n'.join(broken)
+    )
 
 
 def test_html_markers_use_the_published_point_size():

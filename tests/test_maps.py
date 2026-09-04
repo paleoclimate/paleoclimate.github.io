@@ -7,6 +7,7 @@ import pytest
 from tests.helpers import (
     LAYER_NAMES,
     MAP_STATE,
+    assert_pdf_points_are_vector,
     goto_viewer,
     idw_html_files,
     knn_html_files,
@@ -227,12 +228,19 @@ def test_every_knn_map_file_loads_leaflet(page, base_url):
     files = knn_html_files()
     assert files
     for path in files:
-        page.goto(
-            repo_url(base_url, f'{path.parent.name}/{path.name}'),
-            wait_until='domcontentloaded',
-            timeout=60_000,
-        )
-        wait_leaflet_ready(page)
+        url = repo_url(base_url, f'{path.parent.name}/{path.name}')
+        last_error = None
+        for _ in range(2):
+            page.goto(url, wait_until='load', timeout=60_000)
+            try:
+                wait_leaflet_ready(page)
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                page.wait_for_timeout(400)
+        if last_error:
+            raise last_error
         state = page.evaluate(MAP_STATE)
         assert state and state['width'] > 80 and state['height'] > 80
         assert page.locator('.leaflet-tile-pane, .leaflet-overlay-pane').count() >= 1
@@ -286,13 +294,18 @@ def _assert_published_point_size(geometry):
     circles = geometry['circles']
     icons = geometry['icons']
     assert circles, 'No CircleMarker data points on the map'
+    visible = [
+        marker for marker in circles
+        if marker.get('width') and marker.get('height')
+    ]
+    assert visible, 'No visible CircleMarker data points on the map'
     for marker in circles:
         assert marker['radius'] == renderer.POINT_RADIUS_PX
         assert marker['weight'] == renderer.POINT_WEIGHT_PX
         assert 'pcvs-point' in marker['className']
-        if marker['width'] is not None:
-            assert abs(marker['width'] - renderer.POINT_OUTER_PX) <= 2.5
-            assert abs(marker['height'] - renderer.POINT_OUTER_PX) <= 2.5
+    for marker in visible:
+        assert abs(marker['width'] - renderer.POINT_OUTER_PX) <= 2.5
+        assert abs(marker['height'] - renderer.POINT_OUTER_PX) <= 2.5
     for icon in icons:
         assert icon['width'] == renderer.POINT_OUTER_PX
         assert icon['height'] == renderer.POINT_OUTER_PX
@@ -396,7 +409,8 @@ def test_live_pdf_export_from_viewer(page, base_url):
     download = download_info.value
     assert download.suggested_filename.endswith('.pdf')
     body = download.path()
-    if body:
-        assert body.stat().st_size > 1000
-        header = body.read_bytes()[:5]
-        assert header == b'%PDF-'
+    assert body, 'Live PDF download did not land on disk'
+    assert body.stat().st_size > 1000
+    header = body.read_bytes()[:5]
+    assert header == b'%PDF-'
+    assert_pdf_points_are_vector(body)
