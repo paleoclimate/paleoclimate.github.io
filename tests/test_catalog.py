@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from tests.helpers import (
     COMPARISON_AGES,
     COMPARISON_DIR,
@@ -135,6 +137,41 @@ def test_layer_names_match_renderer_constants():
         assert name in LAYER_NAMES
 
 
+def test_paleozones_layer_is_optional_and_matches_source():
+    """Paleozones is a Folium overlay only when `{base}_paleozones.geojson` exists.
+
+    Stale generated HTML (from before this layer existed) will fail this check
+    until `render_map.py` is run again. That is expected; do not weaken the
+    assertion to match old maps.
+    """
+    import render_map as renderer
+
+    assert renderer.LAYER_PALEOZONES == 'Paleozones'
+    assert renderer.LAYER_PALEOZONES not in LAYER_NAMES
+
+    geojson = REPO_ROOT / 'GEOJSON'
+    if not geojson.is_dir():
+        pytest.skip('GEOJSON/ is local and gitignored')
+
+    html_files = knn_html_files() + idw_html_files()
+    assert html_files, 'No generated maps to inspect'
+    mismatches = []
+    for path in html_files:
+        match = re.search(r'map_(\d+_ma)_', path.name)
+        assert match, path.name
+        base = match.group(1)
+        has_file = (geojson / f'{base}{renderer.GEOJSON_PALEOZONES_SUFFIX}').is_file()
+        text = path.read_text(encoding='utf-8')
+        has_layer = f'"{renderer.LAYER_PALEOZONES}"' in text
+        if has_file != has_layer:
+            mismatches.append(
+                f'{path.name}: paleozones file={has_file} layer={has_layer}'
+            )
+    assert not mismatches, 'Paleozones layer does not match source files:\n' + '\n'.join(
+        mismatches
+    )
+
+
 def test_idw_maps_also_embed_export_api():
     files = idw_html_files()
     assert files, 'No IDW maps found'
@@ -220,6 +257,13 @@ def test_restore_lost_accents_repairs_basin_names():
     import render_map as renderer
 
     for broken, fixed in (
+        ('S? Lu?', 'São Luís'),
+        ('Par?Maranh?', 'Pará-Maranhão'),
+        ('Pernambuco-Para?a', 'Pernambuco-Paraíba'),
+        ('Rec?cavo', 'Recôncavo'),
+        ('Solim?s', 'Solimões'),
+        ('Jacu?e', 'Jacuípe'),
+        ('Ca?d? Asfalto', 'Cañadón Asfalto'),
         ('Cear?', 'Ceará'),
         ('Par?-Maranh?o', 'Pará-Maranhão'),
         ('S?o Lu?s', 'São Luís'),
@@ -227,6 +271,7 @@ def test_restore_lost_accents_repairs_basin_names():
         ('Pernambuco-Para?ba', 'Pernambuco-Paraíba'),
         ('Rec?ncavo', 'Recôncavo'),
         ('Solim?es', 'Solimões'),
+        ('Esp?ito Santo', 'Espírito Santo'),
         ('Esp?rito Santo', 'Espírito Santo'),
         ('Paran?', 'Paraná'),
         ('Jatob?', 'Jatobá'),

@@ -55,6 +55,10 @@ def test_map_controls_and_layers(page, base_url, age):
         assert any(name in label for label in labels), f'{name} missing from {labels}'
         assert overlay_checked(frame, name) is True
 
+    import render_map as renderer
+    if any(renderer.LAYER_PALEOZONES in label for label in labels):
+        assert overlay_checked(frame, renderer.LAYER_PALEOZONES) is True
+
     state = frame.evaluate(MAP_STATE)
     assert state is not None
     assert state['width'] > 200 and state['height'] > 200

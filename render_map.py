@@ -1,11 +1,11 @@
 """
 Render paleogeographic maps from 110 million years ago using Folium.
 This script:
-1. Loads GeoJSON files with points and coastlines
+1. Loads GeoJSON files with points, coastlines, and optional paleozones
 2. Applies KNN smoothing on point data, then runs IDW interpolation
 3. Generates two maps:
-   - Map 1: Original data (points + coastlines + original raster if exists)
-   - Map 2: KNN + IDW interpolated data (points + coastlines + KNN+IDW raster)
+   - Map 1: Original data (points + coastlines + optional paleozones + original raster if exists)
+   - Map 2: KNN + IDW interpolated data (points + coastlines + optional paleozones + KNN+IDW raster)
 """
 
 import argparse
@@ -53,9 +53,20 @@ METHOD_LABELS = {
 # handles the PDF exporter uses to keep a layer visible or hidden, so both
 # sides must agree on the exact strings.
 LAYER_RASTER = 'Raster'
+LAYER_PALEOZONES = 'Paleozones'
 LAYER_COASTLINES = 'Coastlines'
 LAYER_POINTS = 'Data points'
 LAYER_COLOR_STATS = 'Color stats'
+
+# Companion GeoJSON suffixes. Point files are `{base}.geojson`; these are never
+# treated as point datasets.
+GEOJSON_COASTLINE_SUFFIX = '_coastline.geojson'
+GEOJSON_PALEOZONES_SUFFIX = '_paleozones.geojson'
+GEOJSON_COMPANION_SUFFIXES = (GEOJSON_COASTLINE_SUFFIX, GEOJSON_PALEOZONES_SUFFIX)
+
+PALEOZONE_FILL_OPACITY = 0.28
+PALEOZONE_STROKE_OPACITY = 0.85
+PALEOZONE_WEIGHT_PX = 1.0
 
 # Climate classification palette, shared by markers and the raster ramp.
 # Muted cartographic tones: saturated primaries read as a toy map, and the
@@ -327,6 +338,45 @@ PALEO_REFERENCE_FRAME_CORRECTIONS = {
 # Restore the original names (longest matches first) so basin labels, popups
 # and the basin filter show Portuguese, Spanish and French accents.
 _ACCENT_REPAIRS = {
+    # Rectified-point export (2026): multi-byte sequences collapsed further
+    # than the original shapefile dump (`São Luís` became `S? Lu?`, `Paraíba`
+    # became `Para?a`, basin and subunit often concatenated).
+    'Pernambuco-Para?a/Pernambuco': 'Pernambuco-Paraíba/Pernambuco',
+    'Paran?Caiu?Rio Paran?N/A': 'Paraná/Caiuá/Rio Paraná',
+    'Pernambuco-Para?a/Para?a': 'Pernambuco-Paraíba/Paraíba',
+    'Paran?Caiu?Pirapoazinho': 'Paraná/Caiuá/Pirapoazinho',
+    'Paran?Caiu?Goio Er?N/A': 'Paraná/Caiuá/Goio Erê',
+    'S? Lu?-Graja?Itapecuru': 'São Luís-Grajaú/Itapecuru',
+    'Jatob?Santo Amaro': 'Jatobá/Santo Amaro',
+    'Paran?Serra Geral': 'Paraná/Serra Geral',
+    'Pernambuco-Para?a': 'Pernambuco-Paraíba',
+    'S? Lu?-Graja?N/A': 'São Luís-Grajaú',
+    'S? Lu?-Graja? ': 'São Luís-Grajaú',
+    'Bragan?-Viseu': 'Bragança-Viseu',
+    'Ca?d? Asfalto': 'Cañadón Asfalto',
+    'Jatob?Santana': 'Jatobá/Santana',
+    'Jatob?Brotas': 'Jatobá/Brotas',
+    'Jatob?Ilhas': 'Jatobá/Ilhas',
+    'Par?Maranh?': 'Pará-Maranhão',
+    'Paran?Bauru': 'Paraná/Bauru',
+    'Cha?rcillo': 'Chañarcillo',
+    'Potos?Puca': 'Potosí/Puca',
+    'Graja?N/A': 'Grajaú',
+    'Jatob?N/A': 'Jatobá',
+    'Paran?N/A': 'Paraná',
+    'Cear?N/A': 'Ceará',
+    'Rec?cavo': 'Recôncavo',
+    'Maraj? ': 'Marajó',
+    'Paran? ': 'Paraná',
+    'Parna?a': 'Parnaíba',
+    'Potos? ': 'Potosí',
+    'Solim?s': 'Solimões',
+    'Jacu?e': 'Jacuípe',
+    'Mara?n': 'Marañón',
+    'Neuqu?': 'Neuquén',
+    'S? Lu?': 'São Luís',
+    'Aur? ': 'Aurès',
+    'Huar?': 'Huarón',
     'Pernambuco-Para?ba/Pernambuco': 'Pernambuco-Paraíba/Pernambuco',
     'Pernambuco-Para?ba/Para?ba': 'Pernambuco-Paraíba/Paraíba',
     'Neuqu?n (south back-arc basin)': 'Neuquén (south back-arc basin)',
@@ -343,6 +393,7 @@ _ACCENT_REPAIRS = {
     'S?o Lu?s-Graja?': 'São Luís-Grajaú',
     'Par?-Maranh?o': 'Pará-Maranhão',
     'Ca?ad?n Asfalto': 'Cañadón Asfalto',
+    'Esp?ito Santo': 'Espírito Santo',
     'Esp?rito Santo': 'Espírito Santo',
     'Bragan?a-Viseu': 'Bragança-Viseu',
     'A?n El Guettar': 'Aïn El Guettar',
@@ -745,6 +796,63 @@ def get_climate_class(props, default=None):
             value = str(value).strip().upper()
             return value or default
     return default
+
+
+# Paleozone polygons ship a Portuguese `Paleozona` label (Humid / Semi-arid /
+# Dry, plus a lowercase `humid` typo). Map those onto the same H/S/D codes
+# the raster and data points already use.
+_PALEOZONE_CLASS_BY_LABEL = {
+    'humid': 'H',
+    'semi-arid': 'S',
+    'semi arid': 'S',
+    'semiarid': 'S',
+    'dry': 'D',
+    'h': 'H',
+    's': 'S',
+    'd': 'D',
+}
+
+
+def paleozone_climate_class(props, default='S'):
+    """Climate class of a Paleozone feature (`H`, `S`, or `D`)."""
+    if not props:
+        return default
+    raw = props.get('Paleozona')
+    if raw is None:
+        raw = props.get('Paleozone')
+    if raw is None or str(raw).strip() == '':
+        return default
+    key = ' '.join(str(raw).strip().lower().split())
+    return _PALEOZONE_CLASS_BY_LABEL.get(key, default)
+
+
+def paleozone_display_label(props):
+    """Canonical English Paleozone label, e.g. `humid` -> `Humid`."""
+    return CLIMATE_LABELS[paleozone_climate_class(props)]
+
+
+def paleozone_style(feature):
+    """Folium path style: translucent fill, thin outline, climate-class colour."""
+    code = paleozone_climate_class(feature.get('properties') or {})
+    color = CLIMATE_COLORS.get(code, CLIMATE_COLORS['S'])
+    return {
+        'fillColor': color,
+        'color': color,
+        'weight': PALEOZONE_WEIGHT_PX,
+        'fillOpacity': PALEOZONE_FILL_OPACITY,
+        'opacity': PALEOZONE_STROKE_OPACITY,
+        'lineCap': 'round',
+        'lineJoin': 'round',
+    }
+
+
+def with_paleozone_tooltip_labels(geojson_data):
+    """Copy of ``geojson_data`` with a canonical `Paleozone` property for tooltips."""
+    labeled = json.loads(json.dumps(geojson_data))
+    for feature in labeled.get('features', []):
+        props = feature.setdefault('properties', {})
+        props['Paleozone'] = paleozone_display_label(props)
+    return labeled
 
 # Stable pie-slice order for multi-climate markers (Humid, Semi-arid, Dry).
 _CLIMATE_DISPLAY_ORDER = ('H', 'S', 'D')
@@ -2152,6 +2260,9 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                 var weight = (opt.weight != null ? opt.weight : 1) * PX;
                 var opacity = opt.opacity != null ? opt.opacity : 1;
                 var closed = (typeof L.Polygon === 'function' && layer instanceof L.Polygon);
+                var fillOp = opt.fillOpacity != null ? opt.fillOpacity : 0;
+                var shouldFill = closed && fillOp > 0;
+                var fill = hexRgb(opt.fillColor || opt.color || '#94a3b8');
                 doc.setDrawColor(color[0], color[1], color[2]);
                 doc.setLineWidth(Math.max(0.15, weight));
                 if (doc.setLineCap) doc.setLineCap(opt.lineCap || 'round');
@@ -2166,7 +2277,6 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                         doc.setLineDashPattern([], 0);
                     }
                 }
-                setOpacity(doc, opacity);
                 flattenRings(layer.getLatLngs()).forEach(function(ring) {
                     if (ring.length < 2) return;
                     var start = map.latLngToContainerPoint(ring[0]);
@@ -2177,6 +2287,12 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                         deltas.push([(point.x - prev.x) * PX, (point.y - prev.y) * PX]);
                         prev = point;
                     }
+                    if (shouldFill) {
+                        doc.setFillColor(fill[0], fill[1], fill[2]);
+                        setOpacity(doc, fillOp);
+                        doc.lines(deltas, start.x * PX, start.y * PX, [1, 1], 'F', true);
+                    }
+                    setOpacity(doc, opacity);
                     doc.lines(deltas, start.x * PX, start.y * PX, [1, 1], 'S', closed);
                 });
                 setOpacity(doc, 1);
@@ -2383,11 +2499,13 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                point_values_override=None, raster_layer_name=LAYER_RASTER,
                gradient_sharp=2.5,
                color_stats_img_path=None, color_stats_name=None,
-               method=None, age_label='', map_subtitle=''):
-    """Create a Folium map with points, coastlines, and optional raster.
+               method=None, age_label='', map_subtitle='',
+               paleozones_data=None):
+    """Create a Folium map with points, coastlines, optional paleozones, and optional raster.
 
     ``age_label`` and ``map_subtitle`` are accepted for caller compatibility;
-    the viewer header is what names the reconstruction.
+    the viewer header is what names the reconstruction. Paleozones are omitted
+    when ``paleozones_data`` is missing or has no features.
     """
     
     # Calculate combined bounds
@@ -2459,9 +2577,26 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             print(f"Could not add GeoTIFF: {e}")
             print(traceback.format_exc())
     
-    # Add GeoJSON layers
+    # Add GeoJSON layers. Order is raster (already on the map) → Paleozones →
+    # Coastlines → Data points, so translucent belts sit on the interpolated
+    # surface and the shoreline stays readable on top of them.
     print("Adding GeoJSON layers...")
-    
+
+    if paleozones_data and paleozones_data.get('features'):
+        print("Adding Paleozones layer...")
+        folium.GeoJson(
+            with_paleozone_tooltip_labels(paleozones_data),
+            name=LAYER_PALEOZONES,
+            show=True,
+            smooth_factor=1.0,
+            style_function=paleozone_style,
+            tooltip=folium.GeoJsonTooltip(
+                fields=['Paleozone'],
+                aliases=['Paleozone:'],
+                sticky=True
+            )
+        ).add_to(m)
+
     # Add coastline layer
     folium.GeoJson(
         coastline_data,
@@ -3126,11 +3261,14 @@ def pdf_path_for(html_path, scope):
     return f"{os.path.splitext(html_path)[0]}_{scope}.pdf"
 
 def discover_geojson_datasets(geojson_dir='GEOJSON'):
-    """
-    Find all point+costa dataset pairs in geojson_dir.
-    - Point files: *.geojson that do NOT end with _costa.geojson
-    - Coast files: {base}_costa.geojson
-    Returns list of (base_name, points_path, coast_path).
+    """Find point+coastline pairs; Paleozones are an optional companion file.
+
+    - Point files: ``{base}.geojson`` that are not a companion suffix
+    - Coastline files: ``{base}_coastline.geojson`` (required)
+    - Paleozones files: ``{base}_paleozones.geojson`` (optional)
+
+    Returns a list of ``(base_name, points_path, coast_path, paleozones_path)``.
+    ``paleozones_path`` is ``None`` when that file is missing.
     """
     if not os.path.isdir(geojson_dir):
         return []
@@ -3138,14 +3276,16 @@ def discover_geojson_datasets(geojson_dir='GEOJSON'):
     for f in sorted(os.listdir(geojson_dir)):
         if not f.endswith('.geojson'):
             continue
-        if f.endswith('_costa.geojson'):
+        if any(f.endswith(suffix) for suffix in GEOJSON_COMPANION_SUFFIXES):
             continue
         base = f[:-len('.geojson')]
-        coast_file = base + '_costa.geojson'
-        coast_path = os.path.join(geojson_dir, coast_file)
-        if os.path.isfile(coast_path):
-            points_path = os.path.join(geojson_dir, f)
-            pairs.append((base, points_path, coast_path))
+        coast_path = os.path.join(geojson_dir, base + GEOJSON_COASTLINE_SUFFIX)
+        if not os.path.isfile(coast_path):
+            continue
+        paleozones_path = os.path.join(geojson_dir, base + GEOJSON_PALEOZONES_SUFFIX)
+        if not os.path.isfile(paleozones_path):
+            paleozones_path = None
+        pairs.append((base, os.path.join(geojson_dir, f), coast_path, paleozones_path))
     return pairs
 
 def filter_datasets(datasets, requested):
@@ -3954,7 +4094,7 @@ def _use_utf8_console():
 
 
 def main():
-    """Generate maps for every point+costa dataset found in GEOJSON/."""
+    """Generate maps for every point+coastline dataset found in GEOJSON/."""
     _use_utf8_console()
     _RSS_SAMPLER.start()
     script_start = time.perf_counter()
@@ -3988,12 +4128,15 @@ def main():
 
     datasets = discover_geojson_datasets(args.geojson_dir)
     if not datasets:
-        print(f"No datasets found in {args.geojson_dir}/ (need both X.geojson and X_costa.geojson for each X).")
+        print(
+            f"No datasets found in {args.geojson_dir}/ "
+            f"(need both X.geojson and X_coastline.geojson for each X)."
+        )
         return
     datasets = filter_datasets(datasets, args.maps)
     if not datasets:
         return
-    print(f"Found {len(datasets)} dataset(s): {[b for b, _, _ in datasets]}")
+    print(f"Found {len(datasets)} dataset(s): {[b for b, *_ in datasets]}")
     print(f"Neighbor search method: {method_label(method)} ({method})")
 
     dir_geotiffs = 'GENERATED_GEOTIFFS'
@@ -4008,7 +4151,7 @@ def main():
         pdf_exporter.start()
 
     generated = []
-    for base, points_path, coast_path in datasets:
+    for base, points_path, coast_path, paleozones_path in datasets:
         dataset_start = time.perf_counter()
         dataset_rss_start = _RSS_SAMPLER.sample()
         dataset_watcher = _RSS_SAMPLER.watch(dataset_rss_start)
@@ -4030,12 +4173,20 @@ def main():
         with StepTimer("Load GeoJSON") as t:
             points_data = load_geojson(points_path)
             coastline_data = load_geojson(coast_path)
+            paleozones_data = load_geojson(paleozones_path) if paleozones_path else None
         _record_step(t)
 
         n_pts = len(points_data.get('features', []))
         n_coast = len(coastline_data.get('features', []))
         print(f"Loaded {n_pts} points from {points_path}")
         print(f"Loaded {n_coast} coastline features from {coast_path}")
+        if paleozones_data is not None:
+            n_paleo = len(paleozones_data.get('features', []))
+            print(f"Loaded {n_paleo} paleozone features from {paleozones_path}")
+            if n_paleo == 0:
+                paleozones_data = None
+        else:
+            print(f"No Paleozones file for {base}")
         if n_pts == 0:
             print(f"Skipping {base}: no point features.")
             _RSS_SAMPLER.release(dataset_watcher)
@@ -4044,6 +4195,10 @@ def main():
         with StepTimer("Paleo reference frame correction") as t:
             points_data = apply_paleo_reference_frame_correction(points_data, base)
             coastline_data = apply_paleo_reference_frame_correction(coastline_data, base)
+            if paleozones_data is not None:
+                paleozones_data = apply_paleo_reference_frame_correction(
+                    paleozones_data, base
+                )
         _record_step(t)
 
         original_raster_path = os.path.join('GEOTIFF', f'{base}_idw.tif')
@@ -4071,6 +4226,7 @@ def main():
                     gradient_sharp=gradient_sharp,
                     age_label=age_label,
                     map_subtitle='Original raster',
+                    paleozones_data=paleozones_data,
                 )
             _record_step(t)
             generated.append(map1_file)
@@ -4108,6 +4264,7 @@ def main():
                 method=method,
                 age_label=age_label,
                 map_subtitle='IDW interpolation',
+                paleozones_data=paleozones_data,
             )
         _record_step(t)
         generated.append(map_idw_file)
@@ -4148,6 +4305,7 @@ def main():
                 method=method,
                 age_label=age_label,
                 map_subtitle='KNN + IDW interpolation',
+                paleozones_data=paleozones_data,
             )
         _record_step(t)
         generated.append(map_knn_idw_file)
