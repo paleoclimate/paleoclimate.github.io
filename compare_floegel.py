@@ -94,8 +94,8 @@ def floegel_path(age):
     return os.path.join(INPUT_DIR, f'{age}_floegel.png')
 
 
-def costa_path(age):
-    return os.path.join(GEOJSON_DIR, f'{age}_ma_costa.geojson')
+def coastline_path(age):
+    return os.path.join(GEOJSON_DIR, f'{age}_ma_coastline.geojson')
 
 
 def reference_path(age):
@@ -348,7 +348,7 @@ def _iter_linestrings(geom):
 
 def draw_coastline(rgb_image, meta, age):
     """Draw the (Euler-corrected) coastline for `age` onto the reference image."""
-    coast = load_geojson(costa_path(age))
+    coast = load_geojson(coastline_path(age))
     coast = apply_paleo_reference_frame_correction(coast, f'{age}_ma')
     transform = meta['transform']
 

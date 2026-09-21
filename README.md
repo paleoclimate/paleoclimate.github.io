@@ -1,6 +1,7 @@
 # Paleogeographic Map Renderer - 110 Million Years Ago
 
-This project renders a paleogeographic map from 110 million years ago using Folium, displaying GeoJSON data points, coastlines, and GeoTIFF raster data.
+This project renders paleogeographic maps using Folium, displaying GeoJSON data
+points, reconstructed coastlines, optional paleozone polygons, and GeoTIFF raster data.
 
 ## Features
 
@@ -66,6 +67,9 @@ runs live PDF export. Extra pytest flags go after `--`, for example
   - Yellow: Dry (D)
   - Green: Semi-arid (S)
   
+- **Paleozones**: Optional climate-belt polygons (Humid / Semi-arid / Dry). Not every
+  reconstruction age has them; when the file is missing the layer is omitted.
+  
 - **Coastlines**: Reconstructed coastline polylines
 
 - **Raster**: Interpolated surface data from the GeoTIFF file
@@ -78,7 +82,8 @@ runs live PDF export. Extra pytest flags go after `--`, for example
 - `verify.py`: Generate maps (optional) and run the UI/UX regression suite
 - `tests/`: Playwright + pytest coverage for the viewer, maps, and comparison pages
 - `requirements.txt`: Python package dependencies
-- `GEOJSON/`: Contains GeoJSON files with point and coastline data
+- `GEOJSON/`: Point files (`{age}_ma.geojson`), coastlines (`{age}_ma_coastline.geojson`),
+  and optional paleozones (`{age}_ma_paleozones.geojson`)
 - `GEOTIFF/`: Contains GeoTIFF raster files
 - `RASTER/`: Contains ArcGIS raster data (not directly used in current implementation)
 
@@ -103,7 +108,7 @@ aspect ratio of the exported region, so there are no white margins to trim.
 
 In the viewer, tick **Raster area only** next to the **PDF** button to choose the scope. The
 export is rendered in the browser from the map as it currently stands, so whatever is checked
-under **Layers** (Raster, Coastlines, Data points, Color stats) and whichever basins are
+under **Layers** (Raster, Paleozones when present, Coastlines, Data points, Color stats) and whichever basins are
 filtered in is exactly what the PDF shows. Interactive controls (zoom, layer switcher, basin
 filter, measure) are left out.
 
