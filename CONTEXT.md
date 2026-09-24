@@ -10,10 +10,14 @@ _Avoid_: map, time slice, timestep
 
 **Data point**:
 A geological formation location at a reconstruction age, carrying a climate class.
-_Avoid_: sample, marker, record
+_Avoid_: sample, marker, record, conceptual point
+
+**Conceptual point**:
+A climate-class location at a reconstruction age with no formation identity.
+_Avoid_: data point, paleozone
 
 **Climate class**:
-The Humid (H), Semi-arid (S), or Dry (D) classification of a data point, and the same three labels on a Paleozone.
+The Humid (H), Semi-arid (S), or Dry (D) classification shared by a data point, a conceptual point, and a Paleozone.
 _Avoid_: paleozone, climate zone, climate value
 
 **Coastline**:

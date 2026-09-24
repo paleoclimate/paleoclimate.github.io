@@ -32,6 +32,26 @@ def test_discover_requires_coastline_and_skips_companions(tmp_path):
     assert by_base['115_ma'][3] is None
 
 
+def test_conceptual_points_drop_from_drawing_and_stay_in_interpolation():
+    points = {
+        'type': 'FeatureCollection',
+        'features': [
+            {'type': 'Feature', 'properties': {'ID': '3', 'Climate_Cl': 'H'},
+             'geometry': {'type': 'Point', 'coordinates': [1.0, 2.0]}},
+            {'type': 'Feature', 'properties': {'ID': None, 'Climate_Cl': 'S'},
+             'geometry': {'type': 'Point', 'coordinates': [3.0, 4.0]}},
+            {'type': 'Feature', 'properties': {'ID': 'N/A', 'Climate_Cl': 'D'},
+             'geometry': {'type': 'Point', 'coordinates': [5.0, 6.0]}},
+            {'type': 'Feature', 'properties': {'ID': ' n/a ', 'Climate_Cl': 'H'},
+             'geometry': {'type': 'Point', 'coordinates': [7.0, 8.0]}},
+        ],
+    }
+    drawn = renderer.drawable_point_features(points)
+    assert [feature['properties']['ID'] for feature in drawn] == ['3']
+    _, values = renderer.extract_points_and_values(points)
+    assert list(values) == [3.0, 2.0, 1.0, 3.0]
+
+
 def test_paleozone_labels_normalize_humid_typo():
     assert renderer.paleozone_climate_class({'Paleozona': 'humid'}) == 'H'
     assert renderer.paleozone_display_label({'Paleozona': 'humid'}) == 'Humid'

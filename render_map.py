@@ -946,6 +946,28 @@ def climate_marker_icon_html(climates_tied, color_map, radius_px=POINT_RADIUS_PX
     )
     return html, outer
 
+def is_conceptual_point(props):
+    """True when the point has no formation identity.
+
+    The source table encodes that absence as JSON null (70 Ma, 75 Ma) or the
+    placeholder ``N/A`` (every other age). Blank text is the same absence.
+    Interpolation still uses these points; only the drawing drops them.
+    """
+    value = (props or {}).get('ID')
+    if value is None:
+        return True
+    text = str(value).strip()
+    return text == '' or text.upper() in {'N/A', 'NA'}
+
+
+def drawable_point_features(points_data):
+    """Point features to draw: data points, not conceptual points."""
+    return [
+        feature for feature in (points_data or {}).get('features', [])
+        if not is_conceptual_point(feature.get('properties') or {})
+    ]
+
+
 def extract_points_and_values(points_data):
     """Extract point coordinates and numeric values from GeoJSON."""
     points = []
@@ -2623,9 +2645,12 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     point_weight = POINT_WEIGHT_PX
     color_map = CLIMATE_COLORS
     
-    # Group features by coordinate so overlapping points share a single marker
+    # Group features by coordinate so overlapping points share a single marker.
+    # Conceptual points (ID null or N/A) stay in the interpolator above and
+    # are omitted here, so they never become a marker, popup, or basin row.
     coord_groups = OrderedDict()
-    for feature in points_data.get('features', []):
+    drawn_features = drawable_point_features(points_data)
+    for feature in drawn_features:
         geom = feature.get('geometry', {})
         if geom.get('type') == 'Point':
             coords = geom.get('coordinates', [])
@@ -2743,7 +2768,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     # Basin filter control (topleft, next to zoom)
     basins = sorted(set(
         feature.get('properties', {}).get('Basin_Sub_') or 'N/A'
-        for feature in points_data.get('features', [])
+        for feature in drawn_features
         if feature.get('geometry', {}).get('type') == 'Point'
            and feature.get('geometry', {}).get('coordinates')
     ))
