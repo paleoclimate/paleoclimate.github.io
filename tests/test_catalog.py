@@ -10,7 +10,6 @@ from tests.helpers import (
     COMPARISON_AGES,
     COMPARISON_DIR,
     INDEX_HTML,
-    KNN_DIR,
     LAYER_NAMES,
     REPO_ROOT,
     assert_pdf_points_are_vector,
@@ -41,7 +40,7 @@ def test_maps_catalog_is_well_formed():
         for key in ('path', 'age', 'label', 'method', 'caption', 'pdf', 'comparison'):
             assert key in entry, f'{entry} is missing {key}'
         assert entry['label'] == f"{entry['age']} Ma"
-        assert entry['path'].startswith('GENERATED_KNN_IDW_MAPS/')
+        assert entry['path'].startswith('GENERATED_IDW_MAPS/')
         assert entry['path'].endswith('.html')
         assert (REPO_ROOT / entry['path']).is_file(), f"Missing map {entry['path']}"
         assert isinstance(entry['pdf'], dict)
@@ -52,34 +51,38 @@ def test_maps_catalog_is_well_formed():
                 assert href.endswith(f'_{scope}.pdf')
 
 
-def test_catalog_ages_match_knn_html_files():
+def test_catalog_ages_match_idw_html_files():
     maps = load_maps_catalog()
     catalog_paths = {entry['path'] for entry in maps}
-    disk_paths = {path.relative_to(REPO_ROOT).as_posix() for path in knn_html_files()}
+    disk_paths = {path.relative_to(REPO_ROOT).as_posix() for path in idw_html_files()}
     assert catalog_paths == disk_paths, (
-        'index.html MAPS and GENERATED_KNN_IDW_MAPS/*.html drifted apart. '
+        'index.html MAPS and GENERATED_IDW_MAPS/*.html drifted apart. '
         'Regenerate the viewer with python render_map.py'
+    )
+    assert knn_html_files() == [], (
+        'KNN maps are not part of this candidate. '
+        'Remove GENERATED_KNN_IDW_MAPS HTML before publishing.'
     )
 
 
-def test_every_knn_map_has_overlay_png():
+def test_every_idw_map_has_overlay_png():
     missing = []
-    for html in knn_html_files():
+    for html in idw_html_files():
         png = overlay_png_for(html)
         if not png.is_file() or png.stat().st_size < 1000:
             missing.append(str(png))
     assert not missing, 'Missing or tiny raster overlays:\n' + '\n'.join(missing)
 
 
-def test_idw_maps_cover_the_same_ages():
-    knn_ages = set(catalog_ages())
+def test_catalog_ages_match_idw_map_files():
+    catalog = set(catalog_ages())
     idw_ages = set()
     for path in idw_html_files():
         match = re.search(r'map_(\d+)_ma', path.name)
         assert match, path.name
         idw_ages.add(int(match.group(1)))
-    assert knn_ages, 'No KNN maps in the catalog'
-    assert knn_ages <= idw_ages, f'IDW maps missing ages {sorted(knn_ages - idw_ages)}'
+    assert catalog, 'No IDW maps in the catalog'
+    assert catalog == idw_ages, f'Catalog ages {sorted(catalog)} != IDW ages {sorted(idw_ages)}'
 
 
 def test_comparison_links_only_for_supported_ages():
@@ -99,8 +102,8 @@ def test_comparison_links_only_for_supported_ages():
 
 
 def test_generated_html_embeds_map_chrome_and_export_api():
-    html_files = knn_html_files()
-    assert html_files, 'No KNN maps to inspect'
+    html_files = idw_html_files()
+    assert html_files, 'No IDW maps to inspect'
     required = (
         'leaflet-container',
         'window.PCVS',
@@ -126,7 +129,7 @@ def test_generated_html_embeds_map_chrome_and_export_api():
 def test_layer_names_match_renderer_constants():
     import render_map as renderer
 
-    html = knn_html_files()[0].read_text(encoding='utf-8')
+    html = idw_html_files()[0].read_text(encoding='utf-8')
     for name in (
         renderer.LAYER_RASTER,
         renderer.LAYER_COASTLINES,
@@ -153,7 +156,7 @@ def test_paleozones_layer_is_optional_and_matches_source():
     if not geojson.is_dir():
         pytest.skip('GEOJSON/ is local and gitignored')
 
-    html_files = knn_html_files() + idw_html_files()
+    html_files = idw_html_files()
     assert html_files, 'No generated maps to inspect'
     mismatches = []
     for path in html_files:
@@ -215,12 +218,9 @@ def test_geotiffs_exist_for_catalog_ages():
         raise AssertionError('GENERATED_GEOTIFFS/ is missing')
     missing = []
     for age in catalog_ages():
-        knn = list(geotiff_dir.glob(f'{age}_ma_knn_idw_*.tif'))
         idw = list(geotiff_dir.glob(f'{age}_ma_idw_only_*.tif'))
-        if not knn:
-            missing.append(f'{age} Ma KNN GeoTIFF')
         if not idw:
-            missing.append(f'{age} Ma IDW-only GeoTIFF')
+            missing.append(f'{age} Ma IDW GeoTIFF')
     assert not missing, 'Missing interpolated rasters:\n' + '\n'.join(missing)
 
 
@@ -286,7 +286,7 @@ def test_restore_lost_accents_repairs_basin_names():
 
 
 def test_generated_maps_keep_basin_accents():
-    files = knn_html_files() + idw_html_files()
+    files = idw_html_files()
     assert files, 'No generated maps to inspect'
     seen = set()
     broken = []
@@ -304,16 +304,14 @@ def test_generated_maps_keep_basin_accents():
 
 
 def test_every_html_and_pdf_map_was_generated():
-    knn = knn_html_files()
     idw = idw_html_files()
-    assert knn, 'No KNN HTML maps; run python render_map.py --pdf'
     assert idw, 'No IDW HTML maps; run python render_map.py --pdf'
     catalog_paths = {entry['path'] for entry in load_maps_catalog()}
-    knn_paths = {path.relative_to(REPO_ROOT).as_posix() for path in knn}
-    assert catalog_paths == knn_paths
+    idw_paths = {path.relative_to(REPO_ROOT).as_posix() for path in idw}
+    assert catalog_paths == idw_paths
 
     missing = []
-    for html in knn + idw:
+    for html in idw:
         if html.stat().st_size < 10_000:
             missing.append(f'tiny HTML {html.relative_to(REPO_ROOT)}')
         png = overlay_png_for(html)
@@ -338,7 +336,7 @@ def test_export_api_keeps_full_map_points_as_vectors():
 
 
 def test_full_pdfs_keep_data_points_as_vectors():
-    files = knn_html_files() + idw_html_files()
+    files = idw_html_files()
     assert files, 'No generated maps; run python render_map.py --pdf'
     broken = []
     for html in files:
@@ -355,7 +353,7 @@ def test_full_pdfs_keep_data_points_as_vectors():
 def test_html_markers_use_the_published_point_size():
     import render_map as renderer
 
-    files = knn_html_files() + idw_html_files()
+    files = idw_html_files()
     assert files
     radius = renderer.POINT_RADIUS_PX
     weight = renderer.POINT_WEIGHT_PX

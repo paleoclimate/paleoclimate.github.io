@@ -10,7 +10,6 @@ from tests.helpers import (
     assert_pdf_points_are_vector,
     goto_viewer,
     idw_html_files,
-    knn_html_files,
     layer_labels,
     load_maps_catalog,
     map_frame,
@@ -209,11 +208,10 @@ def test_measure_and_fullscreen_controls_are_usable(page, base_url):
     assert fullscreen.first.is_visible()
 
 
-def test_standalone_knn_and_idw_pages_boot(page, base_url):
-    knn = knn_html_files()
+def test_standalone_idw_pages_boot(page, base_url):
     idw = idw_html_files()
-    assert knn and idw
-    samples = [knn[0], knn[len(knn) // 2], knn[-1], idw[len(idw) // 2]]
+    assert idw
+    samples = [idw[0], idw[len(idw) // 2], idw[-1]]
     for path in samples:
         page.goto(
             repo_url(base_url, f'{path.parent.name}/{path.name}'),
@@ -228,8 +226,8 @@ def test_standalone_knn_and_idw_pages_boot(page, base_url):
         assert page.locator('.basin-filter-control').is_visible()
 
 
-def test_every_knn_map_file_loads_leaflet(page, base_url):
-    files = knn_html_files()
+def test_every_idw_map_file_loads_leaflet(page, base_url):
+    files = idw_html_files()
     assert files
     for path in files:
         url = repo_url(base_url, f'{path.parent.name}/{path.name}')
