@@ -3,7 +3,7 @@
 
 Typical use after changing the renderer or the viewer:
 
-    python verify.py --generate --power 4.0 --gradient-sharp 18.0 --kdtree
+    python verify.py --generate --power 1.0 --kdtree --pdf
 
 Run the tests against maps already on disk:
 
@@ -96,10 +96,10 @@ def main() -> None:
         action='store_true',
         help='Run render_map.py before the tests (same defaults as the published maps)',
     )
-    parser.add_argument('--power', type=float, default=4.0,
-                        help='IDW/KNN power used with --generate (default: 4.0)')
-    parser.add_argument('--gradient-sharp', type=float, default=18.0,
-                        help='Color-ramp sharpness used with --generate (default: 18.0)')
+    parser.add_argument('--power', type=float, default=1.0,
+                        help='Indicator-IDW power used with --generate (default: 1.0)')
+    parser.add_argument('--gradient-sharp', type=float, default=1.0,
+                        help='Accepted for older commands. Class colors ignore it.')
     parser.add_argument('--geojson-dir', default='GEOJSON')
     parser.add_argument('--kdtree', action='store_true', default=True,
                         help='Use the k-d tree backend (default)')
