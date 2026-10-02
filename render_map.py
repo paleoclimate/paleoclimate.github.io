@@ -100,6 +100,10 @@ CONDENSATION_EPS_DEGREES = 0.5
 # dry/humid balance does not become a semi-arid band.
 CLASS_TIE_PRIORITY = ('D', 'H', 'S')
 
+# KNN pre-smooth. Each interpolator anchor is reclassified from the
+# inverse-distance mean of this many other anchors, at the same power as the IDW.
+KNN_NEIGHBORS = 8
+
 # Neutral canvas behind the coastlines and the interpolated raster.
 MAP_BACKGROUND = '#eef0f2'
 
@@ -135,6 +139,17 @@ def climate_class_code_from_value(value):
     if value < CLASS_VALUE_MIN + 2.0 * CLASS_THIRD:
         return CLIMATE_CODE['S']
     return CLIMATE_CODE['H']
+
+
+def classify_climate_values(values):
+    """Class code of each numeric climate value, in equal thirds of [1, 3]."""
+    values = np.asarray(values, dtype=np.float64)
+    lower = CLASS_VALUE_MIN + CLASS_THIRD
+    upper = CLASS_VALUE_MIN + 2.0 * CLASS_THIRD
+    codes = np.full(values.shape, CLIMATE_CODE['H'], dtype=np.float64)
+    codes[values < upper] = CLIMATE_CODE['S']
+    codes[values < lower] = CLIMATE_CODE['D']
+    return codes
 
 
 def climate_values_to_rgb(data, valid_mask, gradient_sharp, expected_min=1.0,
@@ -3675,12 +3690,12 @@ def _map_caption(filename, method):
 
 
 def generate_index_html(dir_idw, output='index.html'):
-    """Generate the viewer shell. The published maps are the IDW class rasters."""
+    """Generate the viewer shell. The published maps are the KNN + indicator-IDW rasters."""
     maps_list = []
     folder = dir_idw
     if os.path.isdir(folder):
         htmls = sorted(
-            [f for f in os.listdir(folder) if f.endswith('.html') and '_idw' in f],
+            [f for f in os.listdir(folder) if f.endswith('.html') and '_knn_idw' in f],
             key=_extract_age_sort_key
         )
         for h in htmls:
@@ -4563,10 +4578,10 @@ def main():
             alt = os.path.join('GEOTIFF', f'{base.replace("_ma", "")}_idw.tif')
             if os.path.exists(alt):
                 original_raster_path = alt
-        idw_only_raster_path = os.path.join(dir_geotiffs, f'{base}_idw_only{params_suffix}.tif')
+        idw_only_raster_path = os.path.join(dir_geotiffs, f'{base}_knn_idw{params_suffix}.tif')
         map1_file = os.path.join(dir_idw_maps, f'map_{base}_original.html')
-        map_idw_file = os.path.join(dir_idw_maps, f'map_{base}_idw{params_suffix}.html')
-        raster_overlay_idw_png = os.path.join(dir_idw_maps, f'raster_overlay_{base}_idw{params_suffix}.png')
+        map_idw_file = os.path.join(dir_idw_maps, f'map_{base}_knn_idw{params_suffix}.html')
+        raster_overlay_idw_png = os.path.join(dir_idw_maps, f'raster_overlay_{base}_knn_idw{params_suffix}.png')
 
         if os.path.exists(original_raster_path):
             print("\nGenerating Map: Original Data (with original raster)")
@@ -4591,19 +4606,29 @@ def main():
         else:
             print(f"Original raster not found ({original_raster_path}), skipping Original map.")
 
-        print(f"\nExecuting indicator IDW — {method_label(method)}")
+        print(f"\nExecuting KNN reclass + indicator IDW — {method_label(method)}")
         points, values = extract_points_and_values(interpolator_data)
+        with StepTimer(f"KNN reclass (k={KNN_NEIGHBORS}, {method})") as t:
+            smoothed = knn_smooth_values(
+                points, values, k=KNN_NEIGHBORS, power=power,
+                exclude_self=True, method=method,
+            )
+            class_values = classify_climate_values(smoothed)
+        _record_step(t)
+        changed = int(np.sum(class_values != values))
+        print(f"KNN reclassified {changed} of {len(values)} anchors (k={KNN_NEIGHBORS})")
+
         with StepTimer(f"Indicator IDW raster ({method})") as t:
             create_indicator_raster(
                 points=points,
-                values=values,
+                values=class_values,
                 output_path=idw_only_raster_path,
                 resolution=0.1,
                 power=power,
             )
         _record_step(t)
 
-        print(f"Generating Map: IDW ({map_idw_file})")
+        print(f"Generating Map: KNN + IDW ({map_idw_file})")
         with StepTimer("Map: IDW") as t:
             create_map(
                 points_data=points_data,
@@ -4615,7 +4640,7 @@ def main():
                 color_stats_img_path=raster_overlay_idw_png,
                 method=method,
                 age_label=age_label,
-                map_subtitle='IDW interpolation',
+                map_subtitle='KNN + IDW interpolation',
                 paleozones_data=paleozones_data,
             )
         _record_step(t)
@@ -4646,7 +4671,7 @@ def main():
     print("\n" + "=" * 60)
     print("All maps generated successfully!")
     print("=" * 60)
-    print(f"Power: {power}, class colors: equal thirds of [1, 3]")
+    print(f"Power: {power}, KNN neighbors: {KNN_NEIGHBORS}, class colors: equal thirds of [1, 3]")
     print(f"Condensation radius: {condensation_radius}° before the paleo rotation")
     print(f"Neighbor search flag: {method_label(method)} ({method})")
     print(f"Datasets processed: {len(datasets)}")

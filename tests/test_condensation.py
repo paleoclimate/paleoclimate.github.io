@@ -158,3 +158,29 @@ def test_class_colors_are_solid_thirds_and_ignore_gradient_sharp():
     assert tuple(soft[0, 0]) == dry
     assert tuple(soft[0, 1]) == semi
     assert tuple(soft[0, 2]) == humid
+
+
+def test_classify_climate_values_uses_equal_thirds():
+    lower = renderer.CLASS_VALUE_MIN + renderer.CLASS_THIRD
+    upper = renderer.CLASS_VALUE_MIN + 2.0 * renderer.CLASS_THIRD
+    codes = renderer.classify_climate_values(np.array([
+        lower - 0.01, lower, 2.0, upper - 0.01, upper, 3.0,
+    ]))
+    assert codes.tolist() == [
+        renderer.CLIMATE_CODE['D'],
+        renderer.CLIMATE_CODE['S'],
+        renderer.CLIMATE_CODE['S'],
+        renderer.CLIMATE_CODE['S'],
+        renderer.CLIMATE_CODE['H'],
+        renderer.CLIMATE_CODE['H'],
+    ]
+
+
+def test_knn_reclass_replaces_an_anchor_with_its_neighbor_class():
+    points = np.array([[0.0, 0.0], [1.0, 0.0]])
+    values = np.array([renderer.CLIMATE_CODE['D'], renderer.CLIMATE_CODE['H']])
+    smoothed = renderer.knn_smooth_values(
+        points, values, k=1, power=4.0, exclude_self=True,
+    )
+    classes = renderer.classify_climate_values(smoothed)
+    assert classes.tolist() == [renderer.CLIMATE_CODE['H'], renderer.CLIMATE_CODE['D']]
