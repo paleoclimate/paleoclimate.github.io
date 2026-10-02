@@ -42,6 +42,7 @@ def test_viewer_chrome_and_first_load(page, base_url, maps):
     youngest = int(maps[0]['age'])
     assert current_viewer_age(page) == youngest
     assert page.locator('#ctxAge').inner_text().strip() == f'{youngest} Ma'
+    assert 'KNN' in page.locator('#ctxSub').inner_text()
     assert 'IDW' in page.locator('#ctxSub').inner_text()
     assert page.locator('#prevBtn').is_disabled()
     assert page.locator('#nextBtn').is_enabled()

@@ -24,8 +24,10 @@ pip install -r requirements.txt
 ## Usage
 
 Run the script to generate the interactive maps. The published candidate
-condenses data points at 0.5°, then paints an indicator IDW (power 4, every
-anchor, no snap disk). Class colors are equal thirds of the [1, 3] span.
+condenses data points at 0.5°, reclassifies each interpolator anchor from
+the 8 nearest others (KNN, same power), then paints an indicator IDW
+(power 4, every anchor, no snap disk). Class colors are equal thirds of
+the [1, 3] span. Markers stay on the original citation class.
 
 ```bash
 python render_map.py --power 4.0 --condensation-radius 0.5 --gradient-sharp 18.0 --kdtree --pdf
@@ -103,7 +105,8 @@ For every dataset in `GEOJSON/`, the script generates:
 
 Data points are condensed at 0.5° in source coordinates before the paleo-frame
 rotation. Conceptual points skip that cluster and still anchor the raster.
-Markers on the map stay on the original citations.
+Each anchor is then reclassified from its 8 nearest neighbors. Markers on
+the map stay on the original citations.
 
 ## PDF export
 

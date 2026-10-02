@@ -60,9 +60,11 @@ def test_catalog_ages_match_idw_html_files():
         'Regenerate the viewer with python render_map.py'
     )
     assert knn_html_files() == [], (
-        'KNN maps are not part of this candidate. '
+        'The published KNN + IDW maps live in GENERATED_IDW_MAPS. '
         'Remove GENERATED_KNN_IDW_MAPS HTML before publishing.'
     )
+    assert disk_paths, 'No KNN + IDW HTML maps'
+    assert all('_knn_idw_' in path for path in catalog_paths)
 
 
 def test_every_idw_map_has_overlay_png():
@@ -218,9 +220,9 @@ def test_geotiffs_exist_for_catalog_ages():
         raise AssertionError('GENERATED_GEOTIFFS/ is missing')
     missing = []
     for age in catalog_ages():
-        idw = list(geotiff_dir.glob(f'{age}_ma_idw_only_*.tif'))
-        if not idw:
-            missing.append(f'{age} Ma IDW GeoTIFF')
+        knn = list(geotiff_dir.glob(f'{age}_ma_knn_idw_*.tif'))
+        if not knn:
+            missing.append(f'{age} Ma KNN + IDW GeoTIFF')
     assert not missing, 'Missing interpolated rasters:\n' + '\n'.join(missing)
 
 
