@@ -12,8 +12,8 @@ import pytest
 import render_map as renderer
 
 REPO = Path(__file__).resolve().parents[1]
-IDW_CSV = REPO / 'idw_classes_por_idade_raio_aglutinacao_1.0_power_4.0.csv'
-POINTS_CSV = REPO / 'pontos_dado_por_idade_raio_aglutinacao_1.0_power_4.0.csv'
+IDW_CSV = REPO / 'idw_classes_por_idade_raio_aglutinacao_0.5_power_2.0.csv'
+POINTS_CSV = REPO / 'pontos_dado_por_idade_raio_aglutinacao_0.5_power_2.0.csv'
 
 
 def _rows(path: Path) -> list[dict[str, str]]:
