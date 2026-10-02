@@ -1,5 +1,7 @@
 # Condense data points at 1° before interpolation
 
+The published radius is no longer 1.0°. See `0007-condensation-radius-is-half-a-degree.md`.
+
 Piles of citations at one locality were voting against each other inside the IDW and washing the semi-arid class out. The candidate surface condenses those citations first.
 
 Data points of one reconstruction age cluster at 1.0° Euclidean distance in the source file, before the −13° paleo-frame rotation. The link is transitive: neighbors of neighbors stay in the group until nothing else is within 1.0°. Each row is one vote. The `Weight` column is ignored. The winning class sits at the mean longitude and latitude. An exact tie emits one anchor per tied class at that same coordinate, with no jitter. A data point whose class lost is listed in the audit and still drawn on the map in its own class.

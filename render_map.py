@@ -94,7 +94,7 @@ CLASS_VALUE_MAX = 3.0
 CLASS_THIRD = (CLASS_VALUE_MAX - CLASS_VALUE_MIN) / 3.0
 
 # Data-point condensation. Conceptual points stay out of this radius.
-CONDENSATION_EPS_DEGREES = 1.0
+CONDENSATION_EPS_DEGREES = 0.5
 
 # When indicator weights tie, prefer Dry, then Humid, then Semi-arid, so a
 # dry/humid balance does not become a semi-arid band.
@@ -4441,6 +4441,9 @@ def main():
     parser = argparse.ArgumentParser(description='Generate paleogeographic maps (IDW and KNN+IDW) for all datasets in GEOJSON/.')
     parser.add_argument('--power', type=float, required=True,
                         help='Power parameter for IDW and KNN (e.g. 4.0)')
+    parser.add_argument('--condensation-radius', type=float, default=CONDENSATION_EPS_DEGREES,
+                        help='Euclidean degrees for data-point condensation '
+                             f'(default: {CONDENSATION_EPS_DEGREES})')
     parser.add_argument('--gradient-sharp', type=float, default=2.5,
                         help='Accepted for older commands. Published colors are equal '
                              'class thirds, so this value is not applied.')
@@ -4463,6 +4466,7 @@ def main():
     power = args.power
     gradient_sharp = args.gradient_sharp
     method = args.method
+    condensation_radius = args.condensation_radius
     params_suffix = f'_power{power}_class-thirds_{method}'
 
     datasets = discover_geojson_datasets(args.geojson_dir)
@@ -4532,7 +4536,7 @@ def main():
 
         with StepTimer("Condense data points") as t:
             interpolator_data, condensed_data, overruled_data = condense_proxy_points(
-                points_data
+                points_data, eps_degrees=condensation_radius
             )
             write_condensation_audit(base, condensed_data, overruled_data)
         _record_step(t)
@@ -4643,7 +4647,7 @@ def main():
     print("All maps generated successfully!")
     print("=" * 60)
     print(f"Power: {power}, class colors: equal thirds of [1, 3]")
-    print(f"Condensation radius: {CONDENSATION_EPS_DEGREES}° before the paleo rotation")
+    print(f"Condensation radius: {condensation_radius}° before the paleo rotation")
     print(f"Neighbor search flag: {method_label(method)} ({method})")
     print(f"Datasets processed: {len(datasets)}")
     print(f"GeoTIFFs: {dir_geotiffs}/")
