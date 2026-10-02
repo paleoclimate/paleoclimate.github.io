@@ -22,18 +22,18 @@ def _collection(*features):
     return {'type': 'FeatureCollection', 'features': list(features)}
 
 
-def test_points_within_one_degree_form_one_cluster_and_just_outside_do_not():
+def test_points_within_half_degree_form_one_cluster_and_just_outside_do_not():
     near = _collection(
         _point(0.0, 0.0, 'D', 'a'),
-        _point(0.99, 0.0, 'H', 'b'),
+        _point(0.49, 0.0, 'H', 'b'),
     )
     far = _collection(
         _point(0.0, 0.0, 'D', 'a'),
-        _point(1.01, 0.0, 'H', 'b'),
+        _point(0.51, 0.0, 'H', 'b'),
     )
     exactly = _collection(
         _point(0.0, 0.0, 'D', 'a'),
-        _point(1.0, 0.0, 'H', 'b'),
+        _point(0.5, 0.0, 'H', 'b'),
     )
     _, near_condensed, _ = renderer.condense_proxy_points(near)
     _, far_condensed, _ = renderer.condense_proxy_points(far)
@@ -45,11 +45,11 @@ def test_points_within_one_degree_form_one_cluster_and_just_outside_do_not():
     assert exact_coords[0] == exact_coords[1]
 
 
-def test_chain_keeps_linking_while_a_neighbor_is_inside_one_degree():
+def test_chain_keeps_linking_while_a_neighbor_is_inside_half_degree():
     points = _collection(
         _point(0.0, 0.0, 'D', 'a'),
-        _point(0.9, 0.0, 'D', 'b'),
-        _point(1.8, 0.0, 'H', 'c'),
+        _point(0.4, 0.0, 'D', 'b'),
+        _point(0.8, 0.0, 'H', 'c'),
     )
     _, condensed, overruled = renderer.condense_proxy_points(points)
     assert len(condensed['features']) == 1

@@ -24,7 +24,7 @@ pip install -r requirements.txt
 ## Usage
 
 Run the script to generate the interactive maps. The published candidate
-condenses data points at 1°, then paints an indicator IDW (power 1, every
+condenses data points at 0.5°, then paints an indicator IDW (power 1, every
 anchor, no snap disk). Class colors are equal thirds of the [1, 3] span.
 
 ```bash
@@ -101,7 +101,7 @@ For every dataset in `GEOJSON/`, the script generates:
   raster overlay PNG and, with `--pdf`, the full and raster-area PDFs
 - `index.html`: the viewer that switches between those IDW maps
 
-Data points are condensed at 1° in source coordinates before the paleo-frame
+Data points are condensed at 0.5° in source coordinates before the paleo-frame
 rotation. Conceptual points skip that cluster and still anchor the raster.
 Markers on the map stay on the original citations.
 
