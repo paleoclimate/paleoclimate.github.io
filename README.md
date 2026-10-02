@@ -24,11 +24,11 @@ pip install -r requirements.txt
 ## Usage
 
 Run the script to generate the interactive maps. The published candidate
-condenses data points at 0.5°, then paints an indicator IDW (power 2, every
+condenses data points at 0.5°, then paints an indicator IDW (power 4, every
 anchor, no snap disk). Class colors are equal thirds of the [1, 3] span.
 
 ```bash
-python render_map.py --power 2.0 --condensation-radius 0.5 --kdtree --pdf
+python render_map.py --power 4.0 --condensation-radius 0.5 --gradient-sharp 18.0 --kdtree --pdf
 ```
 
 This writes GeoTIFFs, one interactive HTML map per age, a condensation audit
@@ -46,10 +46,10 @@ Chromium, and exercises the viewer, every generated map, and the comparison tool
 python verify.py
 
 # After a renderer change: generate the published maps, then test
-python verify.py --generate --power 2.0 --condensation-radius 0.5 --kdtree --pdf
+python verify.py --generate --power 4.0 --condensation-radius 0.5 --gradient-sharp 18.0 --kdtree --pdf
 
 # Generate only one age, then test
-python verify.py --generate --map 110 --power 2.0 --condensation-radius 0.5 --kdtree --pdf
+python verify.py --generate --map 110 --power 4.0 --condensation-radius 0.5 --gradient-sharp 18.0 --kdtree --pdf
 ```
 
 The first run may need Playwright's browser:
