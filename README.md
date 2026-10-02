@@ -24,11 +24,11 @@ pip install -r requirements.txt
 ## Usage
 
 Run the script to generate the interactive maps. The published candidate
-condenses data points at 1.0°, then paints an indicator IDW (power 4, every
+condenses data points at 0.5°, then paints an indicator IDW (power 2, every
 anchor, no snap disk). Class colors are equal thirds of the [1, 3] span.
 
 ```bash
-python render_map.py --power 4.0 --condensation-radius 1.0 --kdtree --pdf
+python render_map.py --power 2.0 --condensation-radius 0.5 --kdtree --pdf
 ```
 
 This writes GeoTIFFs, one interactive HTML map per age, a condensation audit
@@ -46,10 +46,10 @@ Chromium, and exercises the viewer, every generated map, and the comparison tool
 python verify.py
 
 # After a renderer change: generate the published maps, then test
-python verify.py --generate --power 4.0 --condensation-radius 1.0 --kdtree --pdf
+python verify.py --generate --power 2.0 --condensation-radius 0.5 --kdtree --pdf
 
 # Generate only one age, then test
-python verify.py --generate --map 110 --power 4.0 --condensation-radius 1.0 --kdtree --pdf
+python verify.py --generate --map 110 --power 2.0 --condensation-radius 0.5 --kdtree --pdf
 ```
 
 The first run may need Playwright's browser:
@@ -101,7 +101,7 @@ For every dataset in `GEOJSON/`, the script generates:
   raster overlay PNG and, with `--pdf`, the full and raster-area PDFs
 - `index.html`: the viewer that switches between those IDW maps
 
-Data points are condensed at 1.0° in source coordinates before the paleo-frame
+Data points are condensed at 0.5° in source coordinates before the paleo-frame
 rotation. Conceptual points skip that cluster and still anchor the raster.
 Markers on the map stay on the original citations.
 
