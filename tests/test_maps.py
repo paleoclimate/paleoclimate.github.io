@@ -66,6 +66,121 @@ def test_map_controls_and_layers(page, base_url, age):
     assert frame.evaluate('() => !!window.PCVS && typeof window.PCVS.exportSize === "function"')
 
 
+def test_basin_click_shows_the_name_unless_it_hits_a_data_point(page, base_url):
+    """A click inside a basin names it. A click on a marker keeps the point popup."""
+    goto_viewer(page, base_url, age=100)
+    frame = map_frame(page)
+    labels = layer_labels(frame)
+    assert any('Basins' in label for label in labels), f'Basins missing from {labels}'
+    if overlay_checked(frame, 'Basins') is not True:
+        toggle_overlay(frame, 'Basins')
+    assert overlay_checked(frame, 'Basins') is True
+
+    spots = frame.evaluate(
+        """() => {
+          let map = null;
+          for (const key of Object.keys(window)) {
+            const value = window[key];
+            if (value && typeof value.eachLayer === 'function' && value._container) {
+              map = value;
+              break;
+            }
+          }
+          if (!map) return null;
+          const basins = [];
+          const markers = [];
+          map.eachLayer(layer => {
+            if (!layer.eachLayer) return;
+            layer.eachLayer(child => {
+              const name = child.feature && child.feature.properties
+                && child.feature.properties.BASIN_NAME;
+              if (name && child._containsPoint) basins.push(child);
+              if (child.getLatLng && child.getPopup && !child.feature) markers.push(child);
+            });
+          });
+          const size = map.getSize();
+          function onScreen(cp) {
+            return cp.x > 8 && cp.y > 8 && cp.x < size.x - 8 && cp.y < size.y - 8;
+          }
+          let point = null;
+          for (const marker of markers) {
+            const at = map.latLngToLayerPoint(marker.getLatLng());
+            const inside = basins.some(basin => basin._containsPoint(at));
+            if (!inside) continue;
+            const cp = map.latLngToContainerPoint(marker.getLatLng());
+            if (!onScreen(cp)) continue;
+            point = {x: cp.x, y: cp.y};
+            break;
+          }
+          function ringPoints(poly) {
+            const found = [];
+            const walk = (node) => {
+              if (!node) return;
+              if (typeof node.lat === 'number') found.push(node);
+              else if (node.forEach) node.forEach(walk);
+            };
+            walk(poly.getLatLngs());
+            return found;
+          }
+          let basin = null;
+          for (const poly of basins) {
+            const samples = [poly.getBounds().getCenter()];
+            const ring = ringPoints(poly);
+            const step = Math.max(1, Math.floor(ring.length / 12));
+            for (let i = 0; i < ring.length; i += step) samples.push(ring[i]);
+            for (const latlng of samples) {
+              const at = map.latLngToLayerPoint(latlng);
+              if (!poly._containsPoint(at)) continue;
+              const crowded = markers.some(marker => {
+                const mp = map.latLngToLayerPoint(marker.getLatLng());
+                const dx = mp.x - at.x;
+                const dy = mp.y - at.y;
+                return dx * dx + dy * dy < 24 * 24;
+              });
+              if (crowded) continue;
+              const cp = map.latLngToContainerPoint(latlng);
+              if (!onScreen(cp)) continue;
+              basin = {
+                x: cp.x,
+                y: cp.y,
+                name: poly.feature.properties.BASIN_NAME,
+              };
+              break;
+            }
+            if (basin) break;
+          }
+          return {
+            point: point,
+            basin: basin,
+            basins: basins.length,
+            markers: markers.length,
+          };
+        }"""
+    )
+    assert spots and spots['basins'] > 0, spots
+    assert spots['basin'], f'No empty interior to click: {spots}'
+    assert spots['point'], f'No data point inside a basin: {spots}'
+
+    container = frame.locator('.leaflet-container')
+    popup = frame.locator('.leaflet-popup-content')
+    container.click(position={'x': spots['basin']['x'], 'y': spots['basin']['y']})
+    popup.wait_for()
+    basin_text = popup.inner_text()
+    assert spots['basin']['name'] in basin_text
+    assert 'Data point' not in basin_text
+    assert 'points at this location' not in basin_text
+
+    container.click(position={'x': spots['point']['x'], 'y': spots['point']['y']})
+    frame.wait_for_function(
+        """() => {
+          const node = document.querySelector('.leaflet-popup-content');
+          if (!node) return false;
+          const text = node.textContent || '';
+          return text.includes('Data point') || text.includes('points at this location');
+        }"""
+    )
+
+
 @pytest.mark.parametrize('age', representative_ages())
 def test_layer_toggles_change_what_is_on_screen(page, base_url, age):
     goto_viewer(page, base_url, age=age)
