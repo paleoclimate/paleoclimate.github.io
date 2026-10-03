@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Remove all generated GeoTIFFs and map outputs (HTMLs, PNGs, PDFs)
-from GENERATED_GEOTIFFS, GENERATED_IDW_MAPS, and GENERATED_KNN_IDW_MAPS.
-Folders are recreated empty.
+Remove generated GeoTIFFs, map outputs, and condensation audits.
+Folders are left in place, empty.
 """
 import os
 import shutil
@@ -11,6 +10,7 @@ DIRS = (
     'GENERATED_GEOTIFFS',
     'GENERATED_IDW_MAPS',
     'GENERATED_KNN_IDW_MAPS',
+    'CONDENSED',
 )
 
 def main():

@@ -110,7 +110,7 @@ def idw_html_files() -> list[Path]:
     if not IDW_DIR.is_dir():
         return []
     return sorted(
-        path for path in IDW_DIR.glob('map_*_idw_*.html')
+        path for path in IDW_DIR.glob('map_*_knn_idw_*.html')
         if path.is_file()
     )
 
