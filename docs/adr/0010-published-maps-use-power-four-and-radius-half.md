@@ -1,0 +1,9 @@
+# Published maps use power 4 and a 0.5° radius
+
+The maps published after this note smooth the anchors with KNN before the same indicator IDW. See `0011-published-maps-smooth-anchors-with-knn.md`.
+
+Power 2 at 0.5° still painted conceptual dry and humid anchors as separate disks. The semi-arid grid won the gaps, so the raster did not meet the paleozone belts. Cells inside a paleozone were scored on 100, 120 and 130 Ma. Mean macro IoU was 0.732 at power 4 and radius 0.5°, against 0.705 at power 2 and the same radius. Power 8 at radius 0.5° fell to 0.726. At power 4 the mean macro IoU was 0.733, 0.732 and 0.734 for radii 0.25°, 0.5° and 1.0°.
+
+This generation uses indicator IDW power 4 and condenses data points at 0.5°. The snap disk stays off. Conceptual points still skip the condensation vote and still anchor the raster. Paleozone polygons stay an overlay; they are not painted into the raster. `--gradient-sharp` is still ignored. The class tables are `idw_classes_por_idade_raio_aglutinacao_0.5_power_4.0.csv` and `pontos_dado_por_idade_raio_aglutinacao_0.5_power_4.0.csv`. The point census counts data points only. The function default radius stays 0.5° so the half-degree tests still describe it; the published command passes `--power 4.0` and `--condensation-radius 0.5`.
+
+**Considered options:** (1) keep power 2 and radius 0.5°; (2) power 4 and radius 1.0°, which tied on IoU but swallows more dry citations; (3) interpolate from conceptual points only, about 0.01 IoU better; (4) power 4 and radius 0.5°, data points included. (4) is the run. (2) was rejected because Gabriel already saw 1.0° drop dry votes. (3) was rejected so measured citations still feed the surface.

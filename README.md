@@ -7,7 +7,7 @@ points, reconstructed coastlines, optional paleozone polygons, and GeoTIFF raste
 
 - **GeoJSON Point Data**: Displays geological formation points with climate classification
 - **Coastline Data**: Shows reconstructed coastlines from 110 Ma
-- **GeoTIFF Raster**: Displays interpolated surface data (KNN + IDW)
+- **GeoTIFF Raster**: Displays the indicator-IDW climate-class surface
 - **Interactive Map**: Full-featured Folium map with layer controls, basin filter, legend,
   fullscreen, and measurement tools
 - **PDF Export**: Downloads the map exactly as it is on screen, framed either on the whole
@@ -23,14 +23,23 @@ pip install -r requirements.txt
 
 ## Usage
 
-Run the script to generate the interactive maps (KNN + IDW). The published
-parameter set is:
+Run the script to generate the interactive maps. The published candidate
+condenses data points at 0.5°, reclassifies each interpolator anchor from
+the 8 nearest others (KNN, same power), then paints an indicator IDW
+(power 4, every anchor, no snap disk). Each class's share of the IDW weight
+is blurred with a 2° Gaussian before the winner is picked, so zone borders
+come out round instead of following the anchor grid; around an anchor whose
+zone that would erase, the blur steps down until the anchor keeps its class.
+`--edge-smooth` sets the sigma in degrees (0 turns it off). Class colors are
+equal thirds of the [1, 3] span. Markers stay on the original citation class.
 
 ```bash
-python render_map.py --power 4.0 --gradient-sharp 18.0 --kdtree
+python render_map.py --power 4.0 --condensation-radius 0.5 --gradient-sharp 18.0 --kdtree --pdf
 ```
 
-This writes GeoTIFFs, one interactive HTML map per age, and regenerates `index.html`.
+This writes GeoTIFFs, one interactive HTML map per age, a condensation audit
+in `CONDENSED/`, and regenerates `index.html`. `--gradient-sharp` is accepted
+and ignored: the raster is class codes, not a sharpened ramp.
 
 ## Verify after changes
 
@@ -43,10 +52,10 @@ Chromium, and exercises the viewer, every generated map, and the comparison tool
 python verify.py
 
 # After a renderer change: generate the published maps, then test
-python verify.py --generate --power 4.0 --gradient-sharp 18.0 --kdtree
+python verify.py --generate --power 4.0 --condensation-radius 0.5 --gradient-sharp 18.0 --kdtree --pdf
 
 # Generate only one age, then test
-python verify.py --generate --map 110 --power 4.0 --gradient-sharp 18.0 --kdtree
+python verify.py --generate --map 110 --power 4.0 --condensation-radius 0.5 --gradient-sharp 18.0 --kdtree --pdf
 ```
 
 The first run may need Playwright's browser:
@@ -72,7 +81,7 @@ runs live PDF export. Extra pytest flags go after `--`, for example
   
 - **Coastlines**: Reconstructed coastline polylines
 
-- **Raster**: Interpolated surface data from the GeoTIFF file
+- **Raster**: Indicator-IDW class surface with rounded zone borders. Dry, semi-arid, and humid are solid colors. Semi-arid is the class that won the cell, not the average of dry and humid.
 
 - **Color stats**: Share of the raster area falling in each climate class
 
@@ -91,10 +100,17 @@ runs live PDF export. Extra pytest flags go after `--`, for example
 
 For every dataset in `GEOJSON/`, the script generates:
 
-- `GENERATED_GEOTIFFS/`: interpolated GeoTIFFs (IDW-only and KNN + IDW)
-- `GENERATED_IDW_MAPS/`, `GENERATED_KNN_IDW_MAPS/`: one interactive `map_<age>_*.html`
-  per map, plus its raster overlay PNG
-- `index.html`: the viewer that switches between ages
+- `CONDENSED/`: `{age}_condensed.geojson` (anchors that enter the interpolator)
+  and `{age}_overruled.geojson` (data points whose class lost the vote)
+- `GENERATED_GEOTIFFS/`: one indicator-IDW GeoTIFF per age
+- `GENERATED_IDW_MAPS/`: one interactive `map_<age>_*.html` per age, plus its
+  raster overlay PNG and, with `--pdf`, the full and raster-area PDFs
+- `index.html`: the viewer that switches between those IDW maps
+
+Data points are condensed at 0.5° in source coordinates before the paleo-frame
+rotation. Conceptual points skip that cluster and still anchor the raster.
+Each anchor is then reclassified from its 8 nearest neighbors. Markers on
+the map stay on the original citations.
 
 ## PDF export
 

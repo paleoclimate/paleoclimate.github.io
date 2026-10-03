@@ -1,14 +1,17 @@
 """
-Render paleogeographic maps from 110 million years ago using Folium.
+Render paleogeographic maps from geological points using Folium.
 This script:
 1. Loads GeoJSON files with points, coastlines, and optional paleozones
-2. Applies KNN smoothing on point data, then runs IDW interpolation
-3. Generates two maps:
+2. Condenses data points, then paints an indicator-IDW class raster with
+   rounded zone borders
+3. Generates:
    - Map 1: Original data (points + coastlines + optional paleozones + original raster if exists)
-   - Map 2: KNN + IDW interpolated data (points + coastlines + optional paleozones + KNN+IDW raster)
+   - Map 2: IDW class raster (points + coastlines + optional paleozones)
 """
 
 import argparse
+import copy
+import math
 import sys
 import threading
 import time
@@ -23,6 +26,7 @@ from rasterio.warp import transform_bounds
 import numpy as np
 from folium import plugins
 import os
+from scipy.ndimage import gaussian_filter
 from scipy.spatial.distance import cdist
 from scipy.spatial import cKDTree
 from PIL import Image
@@ -83,6 +87,32 @@ CLIMATE_LABELS = {
     'D': 'Dry',
 }
 
+# Numeric codes shared by the interpolator and the class raster.
+CLIMATE_CODE = {'D': 1.0, 'S': 2.0, 'H': 3.0}
+
+# Each climate class owns one third of the [1, 3] span the interpolator uses.
+CLASS_VALUE_MIN = 1.0
+CLASS_VALUE_MAX = 3.0
+CLASS_THIRD = (CLASS_VALUE_MAX - CLASS_VALUE_MIN) / 3.0
+
+# Data-point condensation. Conceptual points stay out of this radius.
+CONDENSATION_EPS_DEGREES = 0.5
+
+# When indicator weights tie, prefer Dry, then Humid, then Semi-arid, so a
+# dry/humid balance does not become a semi-arid band.
+CLASS_TIE_PRIORITY = ('D', 'H', 'S')
+
+# KNN pre-smooth. Each interpolator anchor is reclassified from the
+# inverse-distance mean of this many other anchors, at the same power as the IDW.
+KNN_NEIGHBORS = 8
+
+# Gaussian sigma, in degrees, applied to each class's share of the IDW weight
+# before the winning class is picked. Conceptual anchors sit on a ~3° grid, and
+# at power 4 the class borders follow that grid as straight runs and right
+# angles. Around an anchor whose zone this would erase, the blur steps down
+# to half, a quarter, then none.
+EDGE_SMOOTH_DEGREES = 2.0
+
 # Neutral canvas behind the coastlines and the interpolated raster.
 MAP_BACKGROUND = '#eef0f2'
 
@@ -106,22 +136,53 @@ def _hex_to_rgb(value):
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
 
 
+def climate_class_code_from_value(value):
+    """Class code for a numeric climate value, in equal thirds of [1, 3].
+
+    Dry is the lower third, Semi-arid the middle third, Humid the upper third.
+    ``gradient_sharp`` used to squeeze that middle third; the published maps
+    no longer do.
+    """
+    if value < CLASS_VALUE_MIN + CLASS_THIRD:
+        return CLIMATE_CODE['D']
+    if value < CLASS_VALUE_MIN + 2.0 * CLASS_THIRD:
+        return CLIMATE_CODE['S']
+    return CLIMATE_CODE['H']
+
+
+def classify_climate_values(values):
+    """Class code of each numeric climate value, in equal thirds of [1, 3]."""
+    values = np.asarray(values, dtype=np.float64)
+    lower = CLASS_VALUE_MIN + CLASS_THIRD
+    upper = CLASS_VALUE_MIN + 2.0 * CLASS_THIRD
+    codes = np.full(values.shape, CLIMATE_CODE['H'], dtype=np.float64)
+    codes[values < upper] = CLIMATE_CODE['S']
+    codes[values < lower] = CLIMATE_CODE['D']
+    return codes
+
+
 def climate_values_to_rgb(data, valid_mask, gradient_sharp, expected_min=1.0,
                           expected_max=3.0):
-    """Map climate values in [1, 3] onto the published Dry/Semi-arid/Humid ramp."""
-    data_clamped = np.clip(data, expected_min, expected_max)
-    normalized = (data_clamped - expected_min) / (expected_max - expected_min)
-    normalized = np.clip((normalized - 0.5) * gradient_sharp + 0.5, 0, 1)
+    """Paint each valid cell with the solid color of its climate class.
 
+    ``gradient_sharp``, ``expected_min`` and ``expected_max`` stay in the
+    signature so older call sites still run. The color is the class color,
+    not a blend along the ramp.
+    """
+    del gradient_sharp, expected_min, expected_max
     dry = np.array(_hex_to_rgb(CLIMATE_COLORS['D']), dtype=np.float32)
     semi = np.array(_hex_to_rgb(CLIMATE_COLORS['S']), dtype=np.float32)
     humid = np.array(_hex_to_rgb(CLIMATE_COLORS['H']), dtype=np.float32)
 
+    lower_end = CLASS_VALUE_MIN + CLASS_THIRD
+    upper_start = CLASS_VALUE_MIN + 2.0 * CLASS_THIRD
     rgb = np.zeros(data.shape + (3,), dtype=np.float32)
-    lower = (normalized <= 0.5) & valid_mask
-    upper = (normalized > 0.5) & valid_mask
-    rgb[lower] = dry + (semi - dry) * (normalized[lower] * 2.0)[:, None]
-    rgb[upper] = semi + (humid - semi) * ((normalized[upper] - 0.5) * 2.0)[:, None]
+    dry_mask = valid_mask & (data < lower_end)
+    semi_mask = valid_mask & (data >= lower_end) & (data < upper_start)
+    humid_mask = valid_mask & (data >= upper_start)
+    rgb[dry_mask] = dry
+    rgb[semi_mask] = semi
+    rgb[humid_mask] = humid
     return np.clip(rgb, 0, 255).astype(np.uint8)
 
 
@@ -982,6 +1043,381 @@ def extract_points_and_values(points_data):
                 climate = get_climate_class(props, 'S')
                 values.append(climate_to_numeric(climate))
     return np.array(points), np.array(values)
+
+
+def _cluster_index_groups(coords, eps_degrees):
+    """Transitive clusters: A with B and B with C puts A, B and C together.
+
+    Distance is Euclidean degrees, inclusive at ``eps_degrees``.
+    """
+    n = len(coords)
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            return
+        if ra > rb:
+            ra, rb = rb, ra
+        parent[rb] = ra
+
+    eps2 = eps_degrees * eps_degrees
+    cell = eps_degrees if eps_degrees > 0 else 1.0
+    buckets = {}
+    for i, (x, y) in enumerate(coords):
+        key = (math.floor(x / cell), math.floor(y / cell))
+        buckets.setdefault(key, []).append(i)
+    for i, (x, y) in enumerate(coords):
+        ix = math.floor(x / cell)
+        iy = math.floor(y / cell)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for j in buckets.get((ix + dx, iy + dy), ()):
+                    if j <= i:
+                        continue
+                    ddx = x - coords[j][0]
+                    ddy = y - coords[j][1]
+                    if ddx * ddx + ddy * ddy <= eps2 + 1e-12:
+                        union(i, j)
+    groups = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    return [groups[key] for key in sorted(groups)]
+
+
+def _feature_collection(features):
+    return {'type': 'FeatureCollection', 'features': features}
+
+
+def _member_id(props):
+    value = (props or {}).get('ID')
+    if value is None:
+        return ''
+    return str(value).strip()
+
+
+def condense_proxy_points(points_data, eps_degrees=CONDENSATION_EPS_DEGREES):
+    """Condense data points and build the interpolator input.
+
+    Data points (a formation id) within ``eps_degrees`` of each other, chaining
+    through other data points, become one anchor per winning climate class.
+    Each row is one vote. The ``Weight`` column is ignored. An exact tie emits
+    one anchor per tied class at the same mean coordinate, with no jitter.
+
+    Conceptual points are copied onto the interpolator unchanged and never
+    join a cluster, even when they sit inside the radius.
+
+    Returns ``(interpolator, condensed, overruled)`` feature collections in
+    source coordinates, before the paleo-frame rotation.
+    """
+    data_features = []
+    conceptual_features = []
+    for feature in (points_data or {}).get('features', []):
+        geom = feature.get('geometry') or {}
+        if geom.get('type') != 'Point':
+            continue
+        coords = geom.get('coordinates') or []
+        if len(coords) < 2:
+            continue
+        props = feature.get('properties') or {}
+        if is_conceptual_point(props):
+            conceptual_features.append(feature)
+            continue
+        climate = get_climate_class(props, None)
+        if climate not in CLIMATE_CODE:
+            continue
+        data_features.append(feature)
+
+    condensed = []
+    overruled = []
+    if data_features:
+        coords = [
+            (float(feature['geometry']['coordinates'][0]),
+             float(feature['geometry']['coordinates'][1]))
+            for feature in data_features
+        ]
+        for group in _cluster_index_groups(coords, eps_degrees):
+            climates = [
+                get_climate_class(data_features[i].get('properties') or {})
+                for i in group
+            ]
+            counts = Counter(climates)
+            max_count = max(counts.values())
+            winners = [
+                code for code in _CLIMATE_DISPLAY_ORDER
+                if counts.get(code) == max_count
+            ]
+            mean_lon = sum(coords[i][0] for i in group) / len(group)
+            mean_lat = sum(coords[i][1] for i in group) / len(group)
+            member_ids = ','.join(
+                member for member in (
+                    _member_id(data_features[i].get('properties') or {})
+                    for i in group
+                )
+                if member
+            )
+            tied = len(winners) > 1
+            for code in winners:
+                condensed.append({
+                    'type': 'Feature',
+                    'properties': {
+                        'Climate_Cl': code,
+                        'votes': int(max_count),
+                        'cluster_size': len(group),
+                        'tie': tied,
+                        'status': 'tie' if tied else 'majority',
+                        'member_ids': member_ids,
+                    },
+                    'geometry': {
+                        'type': 'Point',
+                        'coordinates': [mean_lon, mean_lat],
+                    },
+                })
+            winner_text = ','.join(winners)
+            for i, climate in zip(group, climates):
+                if climate in winners:
+                    continue
+                props = dict(data_features[i].get('properties') or {})
+                props['winner'] = winner_text
+                props['cluster_size'] = len(group)
+                overruled.append({
+                    'type': 'Feature',
+                    'properties': props,
+                    'geometry': copy.deepcopy(data_features[i].get('geometry')),
+                })
+
+    interpolator = (
+        [copy.deepcopy(feature) for feature in condensed]
+        + [copy.deepcopy(feature) for feature in conceptual_features]
+    )
+    return (
+        _feature_collection(interpolator),
+        _feature_collection(condensed),
+        _feature_collection(overruled),
+    )
+
+
+def write_condensation_audit(base, condensed, overruled, directory='CONDENSED'):
+    """Write the condensed anchors and the data points that lost the vote."""
+    os.makedirs(directory, exist_ok=True)
+    paths = {
+        'condensed': os.path.join(directory, f'{base}_condensed.geojson'),
+        'overruled': os.path.join(directory, f'{base}_overruled.geojson'),
+    }
+    payloads = {'condensed': condensed, 'overruled': overruled}
+    for key, path in paths.items():
+        with open(path, 'w', encoding='utf-8') as handle:
+            json.dump(payloads[key], handle, ensure_ascii=False)
+        print(f"Condensation audit: {path}")
+    return paths
+
+
+def _indicator_winners(distances, values, power):
+    """Winning climate code per row of ``distances``.
+
+    Each anchor adds ``1 / d^power`` to its own class. A cell on top of an
+    anchor gives that class infinite weight. Equal winning weights break
+    toward the nearest tied anchor, then ``CLASS_TIE_PRIORITY``.
+    """
+    values = np.asarray(values, dtype=np.float64)
+    zero = distances == 0
+    safe = np.where(zero, 1.0, distances)
+    weights = np.where(zero, np.inf, 1.0 / np.power(safe, power))
+    codes = np.array([CLIMATE_CODE['D'], CLIMATE_CODE['S'], CLIMATE_CODE['H']])
+    class_weights = np.column_stack([
+        weights[:, values == code].sum(axis=1) if np.any(values == code)
+        else np.zeros(distances.shape[0], dtype=np.float64)
+        for code in codes
+    ])
+    best = class_weights.max(axis=1, keepdims=True)
+    tied = class_weights == best
+    winners = codes[np.argmax(tied, axis=1)]
+    tie_rows = np.flatnonzero(tied.sum(axis=1) > 1)
+    priority = [CLIMATE_CODE[code] for code in CLASS_TIE_PRIORITY]
+    for row in tie_rows:
+        tied_codes = codes[tied[row]]
+        member = np.isin(values, tied_codes)
+        dist = np.where(member, distances[row], np.inf)
+        nearest = dist.min()
+        present = values[dist == nearest]
+        for code in priority:
+            if np.any(present == code):
+                winners[row] = code
+                break
+    return winners
+
+
+def indicator_idw(points, values, grid_lons, grid_lats, power=1.0, chunk=4096):
+    """Class raster: each cell takes the climate class with the greatest IDW weight.
+
+    Every anchor participates. There is no neighbor cap and no snap disk.
+    Semi-arid wins only when semi-arid anchors outweigh dry and humid; the
+    numeric midpoint between dry and humid is not painted semi-arid.
+    """
+    if len(points) == 0:
+        raise ValueError("No points available for indicator IDW")
+    if power <= 0:
+        raise ValueError(f'IDW power must be positive, got {power}')
+    points = np.asarray(points, dtype=np.float64)
+    values = np.asarray(values, dtype=np.float64)
+    lon_grid, lat_grid = np.meshgrid(grid_lons, grid_lats)
+    grid_points = np.column_stack([lon_grid.ravel(), lat_grid.ravel()])
+    winners = np.empty(len(grid_points), dtype=np.float64)
+    for start in range(0, len(grid_points), chunk):
+        stop = start + chunk
+        distances = cdist(grid_points[start:stop], points)
+        winners[start:stop] = _indicator_winners(distances, values, power)
+    return winners.reshape(lon_grid.shape)
+
+
+_CLASS_CODES = np.array([CLIMATE_CODE['D'], CLIMATE_CODE['S'], CLIMATE_CODE['H']])
+_PRIORITY_ROWS = [list(_CLASS_CODES).index(CLIMATE_CODE[code]) for code in CLASS_TIE_PRIORITY]
+
+
+def _winning_class(shares):
+    """Class code with the greatest share per cell; ties follow ``CLASS_TIE_PRIORITY``."""
+    return _CLASS_CODES[_PRIORITY_ROWS][np.argmax(shares[_PRIORITY_ROWS], axis=0)]
+
+
+def _indicator_shares(distances, values, power):
+    """Dry, semi-arid and humid share of the IDW weight, per row of ``distances``.
+
+    A cell on top of anchors splits its weight among the anchors it touches.
+    """
+    zero = distances == 0
+    weights = 1.0 / np.power(np.where(zero, 1.0, distances), power)
+    on_anchor = zero.any(axis=1)
+    weights[on_anchor] = zero[on_anchor]
+    shares = np.column_stack([weights[:, values == code].sum(axis=1) for code in _CLASS_CODES])
+    return shares / shares.sum(axis=1, keepdims=True)
+
+
+def indicator_idw_with_shares(points, values, grid_lons, grid_lats, power=1.0, chunk=4096):
+    """``indicator_idw`` winners plus each class's weight share, shaped (3, lat, lon)."""
+    if len(points) == 0:
+        raise ValueError("No points available for indicator IDW")
+    if power <= 0:
+        raise ValueError(f'IDW power must be positive, got {power}')
+    points = np.asarray(points, dtype=np.float64)
+    values = np.asarray(values, dtype=np.float64)
+    lon_grid, lat_grid = np.meshgrid(grid_lons, grid_lats)
+    grid_points = np.column_stack([lon_grid.ravel(), lat_grid.ravel()])
+    winners = np.empty(len(grid_points), dtype=np.float64)
+    shares = np.empty((len(grid_points), len(_CLASS_CODES)), dtype=np.float64)
+    for start in range(0, len(grid_points), chunk):
+        stop = start + chunk
+        distances = cdist(grid_points[start:stop], points)
+        winners[start:stop] = _indicator_winners(distances, values, power)
+        shares[start:stop] = _indicator_shares(distances, values, power)
+    return winners.reshape(lon_grid.shape), shares.T.reshape((len(_CLASS_CODES),) + lon_grid.shape)
+
+
+def round_class_zones(shares, winners, points, values, grid_lons, grid_lats, resolution,
+                      sigma):
+    """Class raster from class shares blurred by a Gaussian of ``sigma`` degrees.
+
+    The blur rounds the corners and straight runs the anchor grid leaves at
+    high power. An anchor whose cell won its own class in ``winners`` keeps
+    it: around such an anchor the blur is blended down to ``sigma / 2``,
+    ``sigma / 4`` and finally none, over a Gaussian as wide as the blur being
+    replaced, so a small zone keeps its size instead of shrinking to a dot.
+    """
+    if sigma <= 0:
+        return winners
+    points = np.asarray(points, dtype=np.float64)
+    values = np.asarray(values, dtype=np.float64)
+    cols = np.clip(np.rint((points[:, 0] - grid_lons[0]) / resolution).astype(int),
+                   0, len(grid_lons) - 1)
+    rows = np.clip(np.rint((points[:, 1] - grid_lats[0]) / resolution).astype(int),
+                   0, len(grid_lats) - 1)
+    held = winners[rows, cols] == values
+
+    def blurred(degrees):
+        if degrees <= 0:
+            return shares
+        return np.stack([
+            gaussian_filter(share, degrees / resolution, mode='nearest') for share in shares
+        ])
+
+    lon_grid, lat_grid = np.meshgrid(grid_lons, grid_lats)
+    cells = np.column_stack([lon_grid.ravel(), lat_grid.ravel()])
+    current = blurred(sigma)
+    reach = sigma
+    for finer in (sigma / 2.0, sigma / 4.0, 0.0):
+        painted = _winning_class(current)
+        lost = np.flatnonzero(held & (painted[rows, cols] != values))
+        if len(lost) == 0:
+            break
+        lost_cells = np.column_stack([grid_lons[cols[lost]], grid_lats[rows[lost]]])
+        distance, _ = cKDTree(lost_cells).query(cells)
+        blend = np.exp(-0.5 * (distance / reach) ** 2).reshape(lon_grid.shape)
+        current = (1.0 - blend) * current + blend * blurred(finer)
+        if finer > 0:
+            reach = finer
+    return _winning_class(current)
+
+
+def create_indicator_raster(points, values, output_path, resolution=0.1, power=1.0,
+                            edge_smooth=0.0):
+    """Write a GeoTIFF whose cell values are climate class codes 1, 2 or 3.
+
+    ``edge_smooth`` is the Gaussian sigma, in degrees, of ``round_class_zones``;
+    0 keeps the plain indicator IDW winners.
+    """
+    points = np.asarray(points, dtype=np.float64)
+    values = np.asarray(values, dtype=np.float64)
+    if len(points) == 0:
+        raise ValueError("No point data found")
+
+    min_lon, max_lon = points[:, 0].min() - 1, points[:, 0].max() + 1
+    min_lat, max_lat = points[:, 1].min() - 1, points[:, 1].max() + 1
+    grid_lons = np.arange(min_lon, max_lon + resolution, resolution)
+    grid_lats = np.arange(min_lat, max_lat + resolution, resolution)
+    print(f"Creating indicator IDW raster with resolution {resolution}°")
+    print(f"Grid size: {len(grid_lats)} x {len(grid_lons)}")
+    print(f"Bounds: [{min_lat:.2f}, {min_lon:.2f}] to [{max_lat:.2f}, {max_lon:.2f}]")
+    print(f"Anchors: {len(points)} (all of them; power {power}; no snap disk)")
+
+    if edge_smooth > 0:
+        winners, shares = indicator_idw_with_shares(
+            points, values, grid_lons, grid_lats, power=power
+        )
+        grid_values = round_class_zones(
+            shares, winners, points, values, grid_lons, grid_lats, resolution, edge_smooth
+        )
+        changed = float(np.mean(grid_values != winners)) * 100.0
+        print(f"Edge smoothing: sigma {edge_smooth}°, {changed:.1f}% of cells changed class")
+    else:
+        grid_values = indicator_idw(points, values, grid_lons, grid_lats, power=power)
+
+    transform = from_bounds(
+        min_lon, min_lat, max_lon, max_lat, len(grid_lons), len(grid_lats)
+    )
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    with rasterio.open(
+        output_path,
+        'w',
+        driver='GTiff',
+        height=len(grid_lats),
+        width=len(grid_lons),
+        count=1,
+        dtype=grid_values.dtype,
+        crs='EPSG:4326',
+        transform=transform,
+        compress='lzw',
+    ) as dst:
+        dst.write(grid_values, 1)
+    print(f"Indicator IDW raster saved to: {output_path}")
+    return output_path
+
 
 def knn_smooth_values(points, values, k=8, power=2.0, exclude_self=True,
                       method=METHOD_BRUTE):
@@ -2522,7 +2958,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                gradient_sharp=2.5,
                color_stats_img_path=None, color_stats_name=None,
                method=None, age_label='', map_subtitle='',
-               paleozones_data=None):
+               paleozones_data=None, preserve_points=False):
     """Create a Folium map with points, coastlines, optional paleozones, and optional raster.
 
     ``age_label`` and ``map_subtitle`` are accepted for caller compatibility;
@@ -2592,7 +3028,8 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
         try:
             create_raster_overlay(geotiff_path, m, raster_img_path=raster_img_path, 
                                  layer_name=raster_layer_name,
-                                 points_data=points_data, preserve_points=True, point_radius=0.3,
+                                 points_data=points_data, preserve_points=preserve_points,
+                                 point_radius=0.3,
                                  point_values_override=point_values_override, gradient_sharp=gradient_sharp)
         except Exception as e:
             import traceback
@@ -3363,13 +3800,13 @@ def _map_caption(filename, method):
     return f'{caption} · {method_label(method)}' if method else caption
 
 
-def generate_index_html(dir_knn_idw, dir_idw, output='index.html'):
-    """Generate the viewer shell that switches between the generated maps."""
+def generate_index_html(dir_idw, output='index.html'):
+    """Generate the viewer shell. The published maps are the KNN + indicator-IDW rasters."""
     maps_list = []
-    folder = dir_knn_idw
+    folder = dir_idw
     if os.path.isdir(folder):
         htmls = sorted(
-            [f for f in os.listdir(folder) if f.endswith('.html')],
+            [f for f in os.listdir(folder) if f.endswith('.html') and '_knn_idw' in f],
             key=_extract_age_sort_key
         )
         for h in htmls:
@@ -4130,8 +4567,15 @@ def main():
     parser = argparse.ArgumentParser(description='Generate paleogeographic maps (IDW and KNN+IDW) for all datasets in GEOJSON/.')
     parser.add_argument('--power', type=float, required=True,
                         help='Power parameter for IDW and KNN (e.g. 4.0)')
+    parser.add_argument('--condensation-radius', type=float, default=CONDENSATION_EPS_DEGREES,
+                        help='Euclidean degrees for data-point condensation '
+                             f'(default: {CONDENSATION_EPS_DEGREES})')
+    parser.add_argument('--edge-smooth', type=float, default=EDGE_SMOOTH_DEGREES,
+                        help='Gaussian sigma in degrees that rounds the class-zone borders; '
+                             f'0 turns it off (default: {EDGE_SMOOTH_DEGREES})')
     parser.add_argument('--gradient-sharp', type=float, default=2.5,
-                        help='Gradient sharpening factor for color transitions (default: 2.5, higher = more abrupt)')
+                        help='Accepted for older commands. Published colors are equal '
+                             'class thirds, so this value is not applied.')
     parser.add_argument('--geojson-dir', default='GEOJSON',
                         help='Directory containing point and coastline GeoJSON files (default: GEOJSON)')
     parser.add_argument('--pdf', action='store_true',
@@ -4141,15 +4585,22 @@ def main():
                         help='Render only the given dataset(s), e.g. --map 110 or --map 110 115 (default: all)')
     method_group = parser.add_mutually_exclusive_group()
     method_group.add_argument('--brute', dest='method', action='store_const', const=METHOD_BRUTE,
-                              help='Find KNN/IDW neighbors by brute force (full distance matrix) [default]')
+                              help='Record brute force on the published filename [default]. '
+                                   'The class raster uses every anchor either way.')
     method_group.add_argument('--kdtree', dest='method', action='store_const', const=METHOD_KDTREE,
-                              help='Find KNN/IDW neighbors with a k-d tree')
+                              help='Record a k-d tree on the published filename. '
+                                   'The class raster uses every anchor either way.')
     parser.set_defaults(method=METHOD_BRUTE)
     args = parser.parse_args()
     power = args.power
     gradient_sharp = args.gradient_sharp
     method = args.method
-    params_suffix = f'_power{power}_gradient_sharp{gradient_sharp}_{method}'
+    condensation_radius = args.condensation_radius
+    edge_smooth = args.edge_smooth
+    if edge_smooth < 0:
+        parser.error(f'--edge-smooth must be 0 or positive, got {edge_smooth}')
+    smooth_suffix = f'_smooth{edge_smooth}' if edge_smooth > 0 else ''
+    params_suffix = f'_power{power}{smooth_suffix}_class-thirds_{method}'
 
     datasets = discover_geojson_datasets(args.geojson_dir)
     if not datasets:
@@ -4166,8 +4617,7 @@ def main():
 
     dir_geotiffs = 'GENERATED_GEOTIFFS'
     dir_idw_maps = 'GENERATED_IDW_MAPS'
-    dir_knn_idw_maps = 'GENERATED_KNN_IDW_MAPS'
-    for d in (dir_geotiffs, dir_idw_maps, dir_knn_idw_maps):
+    for d in (dir_geotiffs, dir_idw_maps):
         os.makedirs(d, exist_ok=True)
 
     # One browser serves every export; launching one per PDF dominated the run.
@@ -4217,8 +4667,23 @@ def main():
             _RSS_SAMPLER.release(dataset_watcher)
             continue
 
+        with StepTimer("Condense data points") as t:
+            interpolator_data, condensed_data, overruled_data = condense_proxy_points(
+                points_data, eps_degrees=condensation_radius
+            )
+            write_condensation_audit(base, condensed_data, overruled_data)
+        _record_step(t)
+        print(
+            f"Condensed anchors: {len(condensed_data.get('features', []))}; "
+            f"overruled data points: {len(overruled_data.get('features', []))}; "
+            f"interpolator anchors: {len(interpolator_data.get('features', []))}"
+        )
+
         with StepTimer("Paleo reference frame correction") as t:
             points_data = apply_paleo_reference_frame_correction(points_data, base)
+            interpolator_data = apply_paleo_reference_frame_correction(
+                interpolator_data, base
+            )
             coastline_data = apply_paleo_reference_frame_correction(coastline_data, base)
             if paleozones_data is not None:
                 paleozones_data = apply_paleo_reference_frame_correction(
@@ -4231,13 +4696,10 @@ def main():
             alt = os.path.join('GEOTIFF', f'{base.replace("_ma", "")}_idw.tif')
             if os.path.exists(alt):
                 original_raster_path = alt
-        idw_only_raster_path = os.path.join(dir_geotiffs, f'{base}_idw_only{params_suffix}.tif')
-        idw_raster_path = os.path.join(dir_geotiffs, f'{base}_knn_idw{params_suffix}.tif')
+        idw_only_raster_path = os.path.join(dir_geotiffs, f'{base}_knn_idw{params_suffix}.tif')
         map1_file = os.path.join(dir_idw_maps, f'map_{base}_original.html')
-        map_idw_file = os.path.join(dir_idw_maps, f'map_{base}_idw{params_suffix}.html')
-        map_knn_idw_file = os.path.join(dir_knn_idw_maps, f'map_{base}_knn_idw{params_suffix}.html')
-        raster_overlay_idw_png = os.path.join(dir_idw_maps, f'raster_overlay_{base}_idw{params_suffix}.png')
-        raster_overlay_knn_idw_png = os.path.join(dir_knn_idw_maps, f'raster_overlay_{base}_knn_idw{params_suffix}.png')
+        map_idw_file = os.path.join(dir_idw_maps, f'map_{base}_knn_idw{params_suffix}.html')
+        raster_overlay_idw_png = os.path.join(dir_idw_maps, f'raster_overlay_{base}_knn_idw{params_suffix}.png')
 
         if os.path.exists(original_raster_path):
             print("\nGenerating Map: Original Data (with original raster)")
@@ -4262,22 +4724,31 @@ def main():
         else:
             print(f"Original raster not found ({original_raster_path}), skipping Original map.")
 
-        print(f"\nExecuting IDW Interpolation (no KNN) — {method_label(method)}")
-        points, values = extract_points_and_values(points_data)
-        with StepTimer(f"IDW raster (no KNN, {method})") as t:
-            create_idw_raster(
-                points_data=points_data,
+        print(f"\nExecuting KNN reclass + indicator IDW — {method_label(method)}")
+        points, values = extract_points_and_values(interpolator_data)
+        with StepTimer(f"KNN reclass (k={KNN_NEIGHBORS}, {method})") as t:
+            smoothed = knn_smooth_values(
+                points, values, k=KNN_NEIGHBORS, power=power,
+                exclude_self=True, method=method,
+            )
+            class_values = classify_climate_values(smoothed)
+        _record_step(t)
+        changed = int(np.sum(class_values != values))
+        print(f"KNN reclassified {changed} of {len(values)} anchors (k={KNN_NEIGHBORS})")
+
+        with StepTimer(f"Indicator IDW raster ({method})") as t:
+            create_indicator_raster(
                 points=points,
-                values=values,
+                values=class_values,
                 output_path=idw_only_raster_path,
                 resolution=0.1,
                 power=power,
-                method=method
+                edge_smooth=edge_smooth,
             )
         _record_step(t)
 
-        print(f"Generating Map: IDW only ({map_idw_file})")
-        with StepTimer("Map: IDW only") as t:
+        print(f"Generating Map: KNN + IDW ({map_idw_file})")
+        with StepTimer("Map: IDW") as t:
             create_map(
                 points_data=points_data,
                 coastline_data=coastline_data,
@@ -4288,55 +4759,14 @@ def main():
                 color_stats_img_path=raster_overlay_idw_png,
                 method=method,
                 age_label=age_label,
-                map_subtitle='IDW interpolation',
+                map_subtitle='KNN + IDW interpolation',
                 paleozones_data=paleozones_data,
             )
         _record_step(t)
         generated.append(map_idw_file)
         if pdf_exporter.available:
-            with StepTimer("PDF: IDW only") as t:
+            with StepTimer("PDF: IDW") as t:
                 pdf_exporter.export_all(map_idw_file)
-            _record_step(t)
-
-        print(f"Executing KNN Smoothing + IDW Interpolation — {method_label(method)}")
-        with StepTimer(f"KNN smoothing ({method})") as t:
-            knn_values = knn_smooth_values(points, values, k=8, power=power,
-                                           exclude_self=True, method=method)
-        _record_step(t)
-
-        with StepTimer(f"IDW raster (KNN + IDW, {method})") as t:
-            create_idw_raster(
-                points_data=points_data,
-                points=points,
-                values=knn_values,
-                output_path=idw_raster_path,
-                resolution=0.1,
-                power=power,
-                method=method
-            )
-        _record_step(t)
-
-        print(f"Generating Map: KNN + IDW ({map_knn_idw_file})")
-        with StepTimer("Map: KNN + IDW") as t:
-            create_map(
-                points_data=points_data,
-                coastline_data=coastline_data,
-                geotiff_path=idw_raster_path,
-                output_file=map_knn_idw_file,
-                raster_img_path=raster_overlay_knn_idw_png,
-                point_values_override=knn_values,
-                gradient_sharp=gradient_sharp,
-                color_stats_img_path=raster_overlay_knn_idw_png,
-                method=method,
-                age_label=age_label,
-                map_subtitle='KNN + IDW interpolation',
-                paleozones_data=paleozones_data,
-            )
-        _record_step(t)
-        generated.append(map_knn_idw_file)
-        if pdf_exporter.available:
-            with StepTimer("PDF: KNN + IDW") as t:
-                pdf_exporter.export_all(map_knn_idw_file)
             _record_step(t)
 
         dataset_total = time.perf_counter() - dataset_start
@@ -4360,17 +4790,20 @@ def main():
     print("\n" + "=" * 60)
     print("All maps generated successfully!")
     print("=" * 60)
-    print(f"Power: {power}, Gradient sharp: {gradient_sharp}")
-    print(f"Neighbor search method: {method_label(method)} ({method})")
+    print(f"Power: {power}, KNN neighbors: {KNN_NEIGHBORS}, class colors: equal thirds of [1, 3]")
+    print("Edge smoothing: " + (f"Gaussian sigma {edge_smooth}° on the class shares"
+                                 if edge_smooth > 0 else "off"))
+    print(f"Condensation radius: {condensation_radius}° before the paleo rotation")
+    print(f"Neighbor search flag: {method_label(method)} ({method})")
     print(f"Datasets processed: {len(datasets)}")
     print(f"GeoTIFFs: {dir_geotiffs}/")
-    print(f"IDW-only maps (HTML/PDF): {dir_idw_maps}/")
-    print(f"KNN+IDW maps (HTML/PDF): {dir_knn_idw_maps}/")
+    print(f"IDW maps (HTML/PDF): {dir_idw_maps}/")
+    print("Condensation audits: CONDENSED/")
     for f in generated:
         print(f"  {f}")
 
     with StepTimer("Generate index.html", indent=0) as t:
-        generate_index_html(dir_knn_idw_maps, dir_idw_maps)
+        generate_index_html(dir_idw_maps)
 
     script_rss_end = _RSS_SAMPLER.sample()
     # The kernel updates its high-water mark lazily, so a sampled value may top it.
