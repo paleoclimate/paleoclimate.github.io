@@ -933,16 +933,59 @@ def with_paleozone_tooltip_labels(geojson_data):
 
 
 def basin_outline_style(feature):
-    """Folium path style: wine stroke, no fill."""
+    """Wine stroke. The fill is invisible and only catches clicks inside the basin."""
     return {
         'color': BASIN_OUTLINE_COLOR,
         'weight': BASIN_OUTLINE_WEIGHT_PX,
         'opacity': BASIN_OUTLINE_OPACITY,
-        'fill': False,
+        'fill': True,
+        'fillColor': BASIN_OUTLINE_COLOR,
         'fillOpacity': 0,
         'lineCap': 'round',
         'lineJoin': 'round',
     }
+
+
+# A transparent SVG fill is not a hit target under pointer-events: visiblePainted.
+# `all` makes the interior clickable without painting it.
+_BASIN_HIT_TARGET = folium.JsCode("""
+function(feature, layer) {
+    function arm() {
+        if (layer._path) layer._path.style.pointerEvents = 'all';
+    }
+    layer.on('add', arm);
+    arm();
+}
+""")
+
+
+def _keep_data_points_above_basins(m):
+    """A basin overlay added later would cover the markers and steal their click.
+
+    Data points have no GeoJSON feature. Basin paths do. Raising the points
+    after every overlay add keeps a click on a marker on the point popup.
+    """
+    macro = MacroElement()
+    macro._template = Template("""
+        {% macro script(this, kwargs) %}
+        (function() {
+            var map = {{this._parent.get_name()}};
+            function raisePoints() {
+                map.eachLayer(function(layer) {
+                    if (!layer.eachLayer) return;
+                    layer.eachLayer(function(child) {
+                        if (child.getLatLng && child.bringToFront && !child.feature) {
+                            child.bringToFront();
+                        }
+                    });
+                });
+            }
+            map.on('overlayadd', raisePoints);
+            raisePoints();
+        })();
+        {% endmacro %}
+    """)
+    m.add_child(macro)
 
 
 def basin_outline_for_display(geojson_data):
@@ -3127,11 +3170,18 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             show=BASIN_OUTLINE_SHOW,
             smooth_factor=1.0,
             style_function=basin_outline_style,
+            on_each_feature=_BASIN_HIT_TARGET,
             tooltip=folium.GeoJsonTooltip(
                 fields=['BASIN_NAME'],
                 aliases=['Basin:'],
                 sticky=True
-            )
+            ),
+            popup=folium.GeoJsonPopup(
+                fields=['BASIN_NAME'],
+                labels=False,
+                localize=False,
+                class_name='pcvs-popup',
+            ),
         ).add_to(m)
 
     # Marker geometry. The same radius and stroke drive solid CircleMarkers, the
@@ -3260,6 +3310,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             ).add_to(points_group)
     
     points_group.add_to(m)
+    _keep_data_points_above_basins(m)
 
     # Basin filter control (topleft, next to zoom)
     basins = sorted(set(

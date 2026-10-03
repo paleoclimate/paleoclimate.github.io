@@ -80,7 +80,9 @@ runs live PDF export. Extra pytest flags go after `--`, for example
   reconstruction age has them; when the file is missing the layer is omitted.
 
 - **Basins**: Optional sedimentary-basin outlines for that reconstruction age.
-  Stroke only, off until the layer is checked. Not every age has them.
+  Stroke only, off until the layer is checked. A click on the outline or inside
+  the basin shows its name; a click on a data point still shows the point.
+  Not every age has them.
   
 - **Coastlines**: Reconstructed coastline polylines
 

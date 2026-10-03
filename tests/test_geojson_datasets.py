@@ -77,7 +77,7 @@ def test_basin_outlines_are_a_stroke_and_keep_only_the_name():
     assert renderer.BASIN_OUTLINE_SHOW is False
     assert 145 in renderer.VIEWER_HIDDEN_AGES
     styled = renderer.basin_outline_style({})
-    assert styled['fill'] is False
+    assert styled['fill'] is True
     assert styled['fillOpacity'] == 0
     assert styled['color'] == renderer.BASIN_OUTLINE_COLOR
     displayed = renderer.basin_outline_for_display({
