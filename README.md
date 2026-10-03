@@ -26,8 +26,12 @@ pip install -r requirements.txt
 Run the script to generate the interactive maps. The published candidate
 condenses data points at 0.5°, reclassifies each interpolator anchor from
 the 8 nearest others (KNN, same power), then paints an indicator IDW
-(power 4, every anchor, no snap disk). Class colors are equal thirds of
-the [1, 3] span. Markers stay on the original citation class.
+(power 4, every anchor, no snap disk). Each class's share of the IDW weight
+is blurred with a 2° Gaussian before the winner is picked, so zone borders
+come out round instead of following the anchor grid; around an anchor whose
+zone that would erase, the blur steps down until the anchor keeps its class.
+`--edge-smooth` sets the sigma in degrees (0 turns it off). Class colors are
+equal thirds of the [1, 3] span. Markers stay on the original citation class.
 
 ```bash
 python render_map.py --power 4.0 --condensation-radius 0.5 --gradient-sharp 18.0 --kdtree --pdf
@@ -77,7 +81,7 @@ runs live PDF export. Extra pytest flags go after `--`, for example
   
 - **Coastlines**: Reconstructed coastline polylines
 
-- **Raster**: Indicator-IDW class surface. Dry, semi-arid, and humid are solid colors. Semi-arid is the class that won the cell, not the average of dry and humid.
+- **Raster**: Indicator-IDW class surface with rounded zone borders. Dry, semi-arid, and humid are solid colors. Semi-arid is the class that won the cell, not the average of dry and humid.
 
 - **Color stats**: Share of the raster area falling in each climate class
 

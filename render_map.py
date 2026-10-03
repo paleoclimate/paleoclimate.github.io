@@ -2,7 +2,8 @@
 Render paleogeographic maps from geological points using Folium.
 This script:
 1. Loads GeoJSON files with points, coastlines, and optional paleozones
-2. Condenses data points, then paints an indicator-IDW class raster
+2. Condenses data points, then paints an indicator-IDW class raster with
+   rounded zone borders
 3. Generates:
    - Map 1: Original data (points + coastlines + optional paleozones + original raster if exists)
    - Map 2: IDW class raster (points + coastlines + optional paleozones)
@@ -25,6 +26,7 @@ from rasterio.warp import transform_bounds
 import numpy as np
 from folium import plugins
 import os
+from scipy.ndimage import gaussian_filter
 from scipy.spatial.distance import cdist
 from scipy.spatial import cKDTree
 from PIL import Image
@@ -103,6 +105,13 @@ CLASS_TIE_PRIORITY = ('D', 'H', 'S')
 # KNN pre-smooth. Each interpolator anchor is reclassified from the
 # inverse-distance mean of this many other anchors, at the same power as the IDW.
 KNN_NEIGHBORS = 8
+
+# Gaussian sigma, in degrees, applied to each class's share of the IDW weight
+# before the winning class is picked. Conceptual anchors sit on a ~3° grid, and
+# at power 4 the class borders follow that grid as straight runs and right
+# angles. Around an anchor whose zone this would erase, the blur steps down
+# to half, a quarter, then none.
+EDGE_SMOOTH_DEGREES = 2.0
 
 # Neutral canvas behind the coastlines and the interpolated raster.
 MAP_BACKGROUND = '#eef0f2'
@@ -1267,8 +1276,100 @@ def indicator_idw(points, values, grid_lons, grid_lats, power=1.0, chunk=4096):
     return winners.reshape(lon_grid.shape)
 
 
-def create_indicator_raster(points, values, output_path, resolution=0.1, power=1.0):
-    """Write a GeoTIFF whose cell values are climate class codes 1, 2 or 3."""
+_CLASS_CODES = np.array([CLIMATE_CODE['D'], CLIMATE_CODE['S'], CLIMATE_CODE['H']])
+_PRIORITY_ROWS = [list(_CLASS_CODES).index(CLIMATE_CODE[code]) for code in CLASS_TIE_PRIORITY]
+
+
+def _winning_class(shares):
+    """Class code with the greatest share per cell; ties follow ``CLASS_TIE_PRIORITY``."""
+    return _CLASS_CODES[_PRIORITY_ROWS][np.argmax(shares[_PRIORITY_ROWS], axis=0)]
+
+
+def _indicator_shares(distances, values, power):
+    """Dry, semi-arid and humid share of the IDW weight, per row of ``distances``.
+
+    A cell on top of anchors splits its weight among the anchors it touches.
+    """
+    zero = distances == 0
+    weights = 1.0 / np.power(np.where(zero, 1.0, distances), power)
+    on_anchor = zero.any(axis=1)
+    weights[on_anchor] = zero[on_anchor]
+    shares = np.column_stack([weights[:, values == code].sum(axis=1) for code in _CLASS_CODES])
+    return shares / shares.sum(axis=1, keepdims=True)
+
+
+def indicator_idw_with_shares(points, values, grid_lons, grid_lats, power=1.0, chunk=4096):
+    """``indicator_idw`` winners plus each class's weight share, shaped (3, lat, lon)."""
+    if len(points) == 0:
+        raise ValueError("No points available for indicator IDW")
+    if power <= 0:
+        raise ValueError(f'IDW power must be positive, got {power}')
+    points = np.asarray(points, dtype=np.float64)
+    values = np.asarray(values, dtype=np.float64)
+    lon_grid, lat_grid = np.meshgrid(grid_lons, grid_lats)
+    grid_points = np.column_stack([lon_grid.ravel(), lat_grid.ravel()])
+    winners = np.empty(len(grid_points), dtype=np.float64)
+    shares = np.empty((len(grid_points), len(_CLASS_CODES)), dtype=np.float64)
+    for start in range(0, len(grid_points), chunk):
+        stop = start + chunk
+        distances = cdist(grid_points[start:stop], points)
+        winners[start:stop] = _indicator_winners(distances, values, power)
+        shares[start:stop] = _indicator_shares(distances, values, power)
+    return winners.reshape(lon_grid.shape), shares.T.reshape((len(_CLASS_CODES),) + lon_grid.shape)
+
+
+def round_class_zones(shares, winners, points, values, grid_lons, grid_lats, resolution,
+                      sigma):
+    """Class raster from class shares blurred by a Gaussian of ``sigma`` degrees.
+
+    The blur rounds the corners and straight runs the anchor grid leaves at
+    high power. An anchor whose cell won its own class in ``winners`` keeps
+    it: around such an anchor the blur is blended down to ``sigma / 2``,
+    ``sigma / 4`` and finally none, over a Gaussian as wide as the blur being
+    replaced, so a small zone keeps its size instead of shrinking to a dot.
+    """
+    if sigma <= 0:
+        return winners
+    points = np.asarray(points, dtype=np.float64)
+    values = np.asarray(values, dtype=np.float64)
+    cols = np.clip(np.rint((points[:, 0] - grid_lons[0]) / resolution).astype(int),
+                   0, len(grid_lons) - 1)
+    rows = np.clip(np.rint((points[:, 1] - grid_lats[0]) / resolution).astype(int),
+                   0, len(grid_lats) - 1)
+    held = winners[rows, cols] == values
+
+    def blurred(degrees):
+        if degrees <= 0:
+            return shares
+        return np.stack([
+            gaussian_filter(share, degrees / resolution, mode='nearest') for share in shares
+        ])
+
+    lon_grid, lat_grid = np.meshgrid(grid_lons, grid_lats)
+    cells = np.column_stack([lon_grid.ravel(), lat_grid.ravel()])
+    current = blurred(sigma)
+    reach = sigma
+    for finer in (sigma / 2.0, sigma / 4.0, 0.0):
+        painted = _winning_class(current)
+        lost = np.flatnonzero(held & (painted[rows, cols] != values))
+        if len(lost) == 0:
+            break
+        lost_cells = np.column_stack([grid_lons[cols[lost]], grid_lats[rows[lost]]])
+        distance, _ = cKDTree(lost_cells).query(cells)
+        blend = np.exp(-0.5 * (distance / reach) ** 2).reshape(lon_grid.shape)
+        current = (1.0 - blend) * current + blend * blurred(finer)
+        if finer > 0:
+            reach = finer
+    return _winning_class(current)
+
+
+def create_indicator_raster(points, values, output_path, resolution=0.1, power=1.0,
+                            edge_smooth=0.0):
+    """Write a GeoTIFF whose cell values are climate class codes 1, 2 or 3.
+
+    ``edge_smooth`` is the Gaussian sigma, in degrees, of ``round_class_zones``;
+    0 keeps the plain indicator IDW winners.
+    """
     points = np.asarray(points, dtype=np.float64)
     values = np.asarray(values, dtype=np.float64)
     if len(points) == 0:
@@ -1283,7 +1384,17 @@ def create_indicator_raster(points, values, output_path, resolution=0.1, power=1
     print(f"Bounds: [{min_lat:.2f}, {min_lon:.2f}] to [{max_lat:.2f}, {max_lon:.2f}]")
     print(f"Anchors: {len(points)} (all of them; power {power}; no snap disk)")
 
-    grid_values = indicator_idw(points, values, grid_lons, grid_lats, power=power)
+    if edge_smooth > 0:
+        winners, shares = indicator_idw_with_shares(
+            points, values, grid_lons, grid_lats, power=power
+        )
+        grid_values = round_class_zones(
+            shares, winners, points, values, grid_lons, grid_lats, resolution, edge_smooth
+        )
+        changed = float(np.mean(grid_values != winners)) * 100.0
+        print(f"Edge smoothing: sigma {edge_smooth}°, {changed:.1f}% of cells changed class")
+    else:
+        grid_values = indicator_idw(points, values, grid_lons, grid_lats, power=power)
 
     transform = from_bounds(
         min_lon, min_lat, max_lon, max_lat, len(grid_lons), len(grid_lats)
@@ -4459,6 +4570,9 @@ def main():
     parser.add_argument('--condensation-radius', type=float, default=CONDENSATION_EPS_DEGREES,
                         help='Euclidean degrees for data-point condensation '
                              f'(default: {CONDENSATION_EPS_DEGREES})')
+    parser.add_argument('--edge-smooth', type=float, default=EDGE_SMOOTH_DEGREES,
+                        help='Gaussian sigma in degrees that rounds the class-zone borders; '
+                             f'0 turns it off (default: {EDGE_SMOOTH_DEGREES})')
     parser.add_argument('--gradient-sharp', type=float, default=2.5,
                         help='Accepted for older commands. Published colors are equal '
                              'class thirds, so this value is not applied.')
@@ -4482,7 +4596,11 @@ def main():
     gradient_sharp = args.gradient_sharp
     method = args.method
     condensation_radius = args.condensation_radius
-    params_suffix = f'_power{power}_class-thirds_{method}'
+    edge_smooth = args.edge_smooth
+    if edge_smooth < 0:
+        parser.error(f'--edge-smooth must be 0 or positive, got {edge_smooth}')
+    smooth_suffix = f'_smooth{edge_smooth}' if edge_smooth > 0 else ''
+    params_suffix = f'_power{power}{smooth_suffix}_class-thirds_{method}'
 
     datasets = discover_geojson_datasets(args.geojson_dir)
     if not datasets:
@@ -4625,6 +4743,7 @@ def main():
                 output_path=idw_only_raster_path,
                 resolution=0.1,
                 power=power,
+                edge_smooth=edge_smooth,
             )
         _record_step(t)
 
@@ -4672,6 +4791,8 @@ def main():
     print("All maps generated successfully!")
     print("=" * 60)
     print(f"Power: {power}, KNN neighbors: {KNN_NEIGHBORS}, class colors: equal thirds of [1, 3]")
+    print("Edge smoothing: " + (f"Gaussian sigma {edge_smooth}° on the class shares"
+                                 if edge_smooth > 0 else "off"))
     print(f"Condensation radius: {condensation_radius}° before the paleo rotation")
     print(f"Neighbor search flag: {method_label(method)} ({method})")
     print(f"Datasets processed: {len(datasets)}")

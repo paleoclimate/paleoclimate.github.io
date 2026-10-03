@@ -176,6 +176,60 @@ def test_classify_climate_values_uses_equal_thirds():
     ]
 
 
+def _anchor_grid(dry):
+    """Anchors every 3° on [-9, 9]², dry where ``dry(lon, lat)``, humid elsewhere."""
+    steps = np.arange(-9.0, 10.0, 3.0)
+    points = np.array([[lon, lat] for lon in steps for lat in steps])
+    values = np.array([
+        renderer.CLIMATE_CODE['D'] if dry(lon, lat) else renderer.CLIMATE_CODE['H']
+        for lon, lat in points
+    ])
+    grid = np.round(np.arange(-10.0, 10.05, 0.1), 6)
+    return points, values, grid
+
+
+def _cell(grid, lon, lat):
+    return int(np.argmin(np.abs(grid - lat))), int(np.argmin(np.abs(grid - lon)))
+
+
+def test_indicator_shares_keep_the_winners_and_sum_to_one():
+    points, values, grid = _anchor_grid(lambda lon, lat: lon <= 0)
+    winners, shares = renderer.indicator_idw_with_shares(points, values, grid, grid, power=4.0)
+    assert np.array_equal(winners, renderer.indicator_idw(points, values, grid, grid, power=4.0))
+    assert np.allclose(shares.sum(axis=0), 1.0)
+    assert renderer.round_class_zones(
+        shares, winners, points, values, grid, grid, 0.1, 0.0
+    ) is winners
+
+
+def test_edge_smoothing_rounds_the_corner_of_a_square_zone():
+    points, values, grid = _anchor_grid(lambda lon, lat: abs(lon) <= 3 and abs(lat) <= 3)
+    winners, shares = renderer.indicator_idw_with_shares(points, values, grid, grid, power=4.0)
+    rounded = renderer.round_class_zones(
+        shares, winners, points, values, grid, grid, 0.1, renderer.EDGE_SMOOTH_DEGREES
+    )
+    corner = _cell(grid, 4.0, 4.0)
+    centre = _cell(grid, 0.0, 0.0)
+    assert winners[corner] == renderer.CLIMATE_CODE['D']
+    assert rounded[corner] == renderer.CLIMATE_CODE['H']
+    assert rounded[centre] == renderer.CLIMATE_CODE['D']
+
+
+def test_edge_smoothing_keeps_the_zone_of_an_isolated_anchor():
+    points, values, grid = _anchor_grid(lambda lon, lat: lon == 0 and lat == 0)
+    winners, shares = renderer.indicator_idw_with_shares(points, values, grid, grid, power=4.0)
+    sigma_cells = renderer.EDGE_SMOOTH_DEGREES / 0.1
+    plain_blur = np.stack([
+        renderer.gaussian_filter(share, sigma_cells, mode='nearest') for share in shares
+    ])
+    anchor = _cell(grid, 0.0, 0.0)
+    assert renderer._winning_class(plain_blur)[anchor] == renderer.CLIMATE_CODE['H']
+    rounded = renderer.round_class_zones(
+        shares, winners, points, values, grid, grid, 0.1, renderer.EDGE_SMOOTH_DEGREES
+    )
+    assert rounded[anchor] == renderer.CLIMATE_CODE['D']
+
+
 def test_knn_reclass_replaces_an_anchor_with_its_neighbor_class():
     points = np.array([[0.0, 0.0], [1.0, 0.0]])
     values = np.array([renderer.CLIMATE_CODE['D'], renderer.CLIMATE_CODE['H']])
