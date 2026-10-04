@@ -1,12 +1,12 @@
 """
 Render paleogeographic maps from geological points using Folium.
 This script:
-1. Loads GeoJSON files with points, coastlines, and optional paleozones
+1. Loads GeoJSON files with points, coastlines, optional paleozones, and optional basin outlines
 2. Condenses data points, then paints an indicator-IDW class raster with
    rounded zone borders
 3. Generates:
-   - Map 1: Original data (points + coastlines + optional paleozones + original raster if exists)
-   - Map 2: IDW class raster (points + coastlines + optional paleozones)
+   - Map 1: Original data (points + coastlines + optional paleozones + optional basin outlines + original raster if exists)
+   - Map 2: IDW class raster (points + coastlines + optional paleozones + optional basin outlines)
 """
 
 import argparse
@@ -58,19 +58,35 @@ METHOD_LABELS = {
 # sides must agree on the exact strings.
 LAYER_RASTER = 'Raster'
 LAYER_PALEOZONES = 'Paleozones'
+LAYER_BASINS = 'Basins'
 LAYER_COASTLINES = 'Coastlines'
 LAYER_POINTS = 'Data points'
 LAYER_COLOR_STATS = 'Color stats'
+
+# Generated onto disk, omitted from the viewer age list.
+VIEWER_HIDDEN_AGES = frozenset({145})
 
 # Companion GeoJSON suffixes. Point files are `{base}.geojson`; these are never
 # treated as point datasets.
 GEOJSON_COASTLINE_SUFFIX = '_coastline.geojson'
 GEOJSON_PALEOZONES_SUFFIX = '_paleozones.geojson'
-GEOJSON_COMPANION_SUFFIXES = (GEOJSON_COASTLINE_SUFFIX, GEOJSON_PALEOZONES_SUFFIX)
+GEOJSON_BASINS_SUFFIX = '_basins.geojson'
+GEOJSON_COMPANION_SUFFIXES = (
+    GEOJSON_COASTLINE_SUFFIX,
+    GEOJSON_PALEOZONES_SUFFIX,
+    GEOJSON_BASINS_SUFFIX,
+)
 
 PALEOZONE_FILL_OPACITY = 0.28
 PALEOZONE_STROKE_OPACITY = 0.85
 PALEOZONE_WEIGHT_PX = 1.0
+
+# Wine stroke. Not the slate coastline and not a climate colour, so a basin
+# limit stays readable when it crosses the shore or a class zone.
+BASIN_OUTLINE_COLOR = '#6b2d4a'
+BASIN_OUTLINE_WEIGHT_PX = 1.35
+BASIN_OUTLINE_OPACITY = 0.92
+BASIN_OUTLINE_SHOW = False
 
 # Climate classification palette, shared by markers and the raster ramp.
 # Muted cartographic tones: saturated primaries read as a toy map, and the
@@ -914,6 +930,75 @@ def with_paleozone_tooltip_labels(geojson_data):
         props = feature.setdefault('properties', {})
         props['Paleozone'] = paleozone_display_label(props)
     return labeled
+
+
+def basin_outline_style(feature):
+    """Wine stroke. The fill is invisible and only catches clicks inside the basin."""
+    return {
+        'color': BASIN_OUTLINE_COLOR,
+        'weight': BASIN_OUTLINE_WEIGHT_PX,
+        'opacity': BASIN_OUTLINE_OPACITY,
+        'fill': True,
+        'fillColor': BASIN_OUTLINE_COLOR,
+        'fillOpacity': 0,
+        'lineCap': 'round',
+        'lineJoin': 'round',
+    }
+
+
+# A transparent SVG fill is not a hit target under pointer-events: visiblePainted.
+# `all` makes the interior clickable without painting it.
+_BASIN_HIT_TARGET = folium.JsCode("""
+function(feature, layer) {
+    function arm() {
+        if (layer._path) layer._path.style.pointerEvents = 'all';
+    }
+    layer.on('add', arm);
+    arm();
+}
+""")
+
+
+def _keep_data_points_above_basins(m):
+    """A basin overlay added later would cover the markers and steal their click.
+
+    Data points have no GeoJSON feature. Basin paths do. Raising the points
+    after every overlay add keeps a click on a marker on the point popup.
+    """
+    macro = MacroElement()
+    macro._template = Template("""
+        {% macro script(this, kwargs) %}
+        (function() {
+            var map = {{this._parent.get_name()}};
+            function raisePoints() {
+                map.eachLayer(function(layer) {
+                    if (!layer.eachLayer) return;
+                    layer.eachLayer(function(child) {
+                        if (child.getLatLng && child.bringToFront && !child.feature) {
+                            child.bringToFront();
+                        }
+                    });
+                });
+            }
+            map.on('overlayadd', raisePoints);
+            raisePoints();
+        })();
+        {% endmacro %}
+    """)
+    m.add_child(macro)
+
+
+def basin_outline_for_display(geojson_data):
+    """Geometry unchanged; properties reduced to ``BASIN_NAME`` for the tooltip."""
+    features = []
+    for feature in geojson_data.get('features', []):
+        props = feature.get('properties') or {}
+        features.append({
+            'type': 'Feature',
+            'properties': {'BASIN_NAME': props.get('BASIN_NAME') or ''},
+            'geometry': feature.get('geometry'),
+        })
+    return {'type': 'FeatureCollection', 'features': features}
 
 # Stable pie-slice order for multi-climate markers (Humid, Semi-arid, Dry).
 _CLIMATE_DISPLAY_ORDER = ('H', 'S', 'D')
@@ -2958,12 +3043,13 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                gradient_sharp=2.5,
                color_stats_img_path=None, color_stats_name=None,
                method=None, age_label='', map_subtitle='',
-               paleozones_data=None, preserve_points=False):
+               paleozones_data=None, basins_data=None, preserve_points=False):
     """Create a Folium map with points, coastlines, optional paleozones, and optional raster.
 
     ``age_label`` and ``map_subtitle`` are accepted for caller compatibility;
     the viewer header is what names the reconstruction. Paleozones are omitted
-    when ``paleozones_data`` is missing or has no features.
+    when ``paleozones_data`` is missing or has no features. Basin outlines are
+    omitted the same way. They start hidden and do not change the map bounds.
     """
     
     # Calculate combined bounds
@@ -3037,8 +3123,9 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             print(traceback.format_exc())
     
     # Add GeoJSON layers. Order is raster (already on the map) → Paleozones →
-    # Coastlines → Data points, so translucent belts sit on the interpolated
-    # surface and the shoreline stays readable on top of them.
+    # Coastlines → Basin outlines → Data points. Belts sit on the raster, the
+    # shoreline stays readable on top of them, and basin limits sit above the
+    # shore so a shared edge is still visible. Markers stay on top.
     print("Adding GeoJSON layers...")
 
     if paleozones_data and paleozones_data.get('features'):
@@ -3074,7 +3161,29 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             sticky=True
         )
     ).add_to(m)
-    
+
+    if basins_data and basins_data.get('features'):
+        print("Adding Basins layer...")
+        folium.GeoJson(
+            basins_data,
+            name=LAYER_BASINS,
+            show=BASIN_OUTLINE_SHOW,
+            smooth_factor=1.0,
+            style_function=basin_outline_style,
+            on_each_feature=_BASIN_HIT_TARGET,
+            tooltip=folium.GeoJsonTooltip(
+                fields=['BASIN_NAME'],
+                aliases=['Basin:'],
+                sticky=True
+            ),
+            popup=folium.GeoJsonPopup(
+                fields=['BASIN_NAME'],
+                labels=False,
+                localize=False,
+                class_name='pcvs-popup',
+            ),
+        ).add_to(m)
+
     # Marker geometry. The same radius and stroke drive solid CircleMarkers, the
     # multi-climate SVG icons and the PDF export, so every point on the map is
     # the same size no matter how many records share the location.
@@ -3201,6 +3310,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             ).add_to(points_group)
     
     points_group.add_to(m)
+    _keep_data_points_above_basins(m)
 
     # Basin filter control (topleft, next to zoom)
     basins = sorted(set(
@@ -3723,14 +3833,16 @@ def pdf_path_for(html_path, scope):
     return f"{os.path.splitext(html_path)[0]}_{scope}.pdf"
 
 def discover_geojson_datasets(geojson_dir='GEOJSON'):
-    """Find point+coastline pairs; Paleozones are an optional companion file.
+    """Find point+coastline pairs; Paleozones and basin outlines are optional.
 
     - Point files: ``{base}.geojson`` that are not a companion suffix
     - Coastline files: ``{base}_coastline.geojson`` (required)
     - Paleozones files: ``{base}_paleozones.geojson`` (optional)
+    - Basin outlines: ``{base}_basins.geojson`` (optional)
 
-    Returns a list of ``(base_name, points_path, coast_path, paleozones_path)``.
-    ``paleozones_path`` is ``None`` when that file is missing.
+    Returns a list of
+    ``(base_name, points_path, coast_path, paleozones_path, basins_path)``.
+    Optional paths are ``None`` when that file is missing.
     """
     if not os.path.isdir(geojson_dir):
         return []
@@ -3747,7 +3859,16 @@ def discover_geojson_datasets(geojson_dir='GEOJSON'):
         paleozones_path = os.path.join(geojson_dir, base + GEOJSON_PALEOZONES_SUFFIX)
         if not os.path.isfile(paleozones_path):
             paleozones_path = None
-        pairs.append((base, os.path.join(geojson_dir, f), coast_path, paleozones_path))
+        basins_path = os.path.join(geojson_dir, base + GEOJSON_BASINS_SUFFIX)
+        if not os.path.isfile(basins_path):
+            basins_path = None
+        pairs.append((
+            base,
+            os.path.join(geojson_dir, f),
+            coast_path,
+            paleozones_path,
+            basins_path,
+        ))
     return pairs
 
 def filter_datasets(datasets, requested):
@@ -3811,6 +3932,8 @@ def generate_index_html(dir_idw, output='index.html'):
         )
         for h in htmls:
             age = _extract_age_sort_key(h)
+            if age in VIEWER_HIDDEN_AGES:
+                continue
             html_path = f"{folder}/{h}"
             pdfs = {}
             for scope in PDF_SCOPES:
@@ -4626,7 +4749,7 @@ def main():
         pdf_exporter.start()
 
     generated = []
-    for base, points_path, coast_path, paleozones_path in datasets:
+    for base, points_path, coast_path, paleozones_path, basins_path in datasets:
         dataset_start = time.perf_counter()
         dataset_rss_start = _RSS_SAMPLER.sample()
         dataset_watcher = _RSS_SAMPLER.watch(dataset_rss_start)
@@ -4649,6 +4772,7 @@ def main():
             points_data = load_geojson(points_path)
             coastline_data = load_geojson(coast_path)
             paleozones_data = load_geojson(paleozones_path) if paleozones_path else None
+            basins_data = load_geojson(basins_path) if basins_path else None
         _record_step(t)
 
         n_pts = len(points_data.get('features', []))
@@ -4662,6 +4786,15 @@ def main():
                 paleozones_data = None
         else:
             print(f"No Paleozones file for {base}")
+        if basins_data is not None:
+            n_basins = len(basins_data.get('features', []))
+            print(f"Loaded {n_basins} basin outlines from {basins_path}")
+            if n_basins == 0:
+                basins_data = None
+            else:
+                basins_data = basin_outline_for_display(basins_data)
+        else:
+            print(f"No basin outlines file for {base}")
         if n_pts == 0:
             print(f"Skipping {base}: no point features.")
             _RSS_SAMPLER.release(dataset_watcher)
@@ -4689,6 +4822,10 @@ def main():
                 paleozones_data = apply_paleo_reference_frame_correction(
                     paleozones_data, base
                 )
+            if basins_data is not None:
+                basins_data = apply_paleo_reference_frame_correction(
+                    basins_data, base
+                )
         _record_step(t)
 
         original_raster_path = os.path.join('GEOTIFF', f'{base}_idw.tif')
@@ -4714,6 +4851,7 @@ def main():
                     age_label=age_label,
                     map_subtitle='Original raster',
                     paleozones_data=paleozones_data,
+                    basins_data=basins_data,
                 )
             _record_step(t)
             generated.append(map1_file)
@@ -4761,6 +4899,7 @@ def main():
                 age_label=age_label,
                 map_subtitle='KNN + IDW interpolation',
                 paleozones_data=paleozones_data,
+                basins_data=basins_data,
             )
         _record_step(t)
         generated.append(map_idw_file)

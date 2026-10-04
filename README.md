@@ -78,6 +78,11 @@ runs live PDF export. Extra pytest flags go after `--`, for example
   
 - **Paleozones**: Optional climate-belt polygons (Humid / Semi-arid / Dry). Not every
   reconstruction age has them; when the file is missing the layer is omitted.
+
+- **Basins**: Optional sedimentary-basin outlines for that reconstruction age.
+  Stroke only, off until the layer is checked. A click on the outline or inside
+  the basin shows its name; a click on a data point still shows the point.
+  Not every age has them.
   
 - **Coastlines**: Reconstructed coastline polylines
 
@@ -92,7 +97,8 @@ runs live PDF export. Extra pytest flags go after `--`, for example
 - `tests/`: Playwright + pytest coverage for the viewer, maps, and comparison pages
 - `requirements.txt`: Python package dependencies
 - `GEOJSON/`: Point files (`{age}_ma.geojson`), coastlines (`{age}_ma_coastline.geojson`),
-  and optional paleozones (`{age}_ma_paleozones.geojson`)
+  optional paleozones (`{age}_ma_paleozones.geojson`), and optional basin
+  outlines (`{age}_ma_basins.geojson`)
 - `GEOTIFF/`: Contains GeoTIFF raster files
 - `RASTER/`: Contains ArcGIS raster data (not directly used in current implementation)
 
@@ -124,7 +130,7 @@ aspect ratio of the exported region, so there are no white margins to trim.
 
 In the viewer, tick **Raster area only** next to the **PDF** button to choose the scope. The
 export is rendered in the browser from the map as it currently stands, so whatever is checked
-under **Layers** (Raster, Paleozones when present, Coastlines, Data points, Color stats) and whichever basins are
+under **Layers** (Raster, Paleozones when present, Coastlines, Basins when present, Data points, Color stats) and whichever basins are
 filtered in is exactly what the PDF shows. Interactive controls (zoom, layer switcher, basin
 filter, measure) are left out.
 
@@ -157,7 +163,8 @@ Results: open `COMPARISON/index_comparison.html` for HTML reports and CSV metric
 
 - The map opens framed on the interpolated raster area
 - You can toggle layers on/off using the layer control
-- The basin filter narrows the data points down to selected basins
+- The basin filter narrows the data points down to selected basins. Basin outlines are a separate layer and do not follow that filter
+- 145 Ma is generated with the other ages and is left out of the viewer age list
 - Use the fullscreen button for better viewing
 - The measurement tool allows you to measure distances on the map
 - In the viewer, the arrow keys step through ages and `P` exports a PDF
