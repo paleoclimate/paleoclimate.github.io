@@ -19,6 +19,7 @@ from tests.helpers import (
     repo_url,
     toggle_overlay,
     wait_leaflet_ready,
+    write_hover_stack_map,
 )
 
 
@@ -179,6 +180,89 @@ def test_basin_click_shows_the_name_unless_it_hits_a_data_point(page, base_url):
           return text.includes('Data point') || text.includes('points at this location');
         }"""
     )
+
+
+def _hover_map(page, spot):
+    box = page.locator('.leaflet-container').bounding_box()
+    page.mouse.move(box['x'] + spot['x'], box['y'] + spot['y'])
+
+
+def _wait_map_idle(page):
+    page.wait_for_function(
+        """() => {
+          for (const key of Object.keys(window)) {
+            const map = window[key];
+            if (!(map && map._container && typeof map.getZoom === 'function')) continue;
+            return map._loaded && !map._animatingZoom && !map._zooming && !map._panAnim;
+          }
+          return false;
+        }"""
+    )
+
+
+def test_hover_shows_the_basin_or_the_point_and_skips_paleozones(page, tmp_path):
+    """All layers on: paleozone hover is empty, basin names itself, point wins."""
+    page.goto(write_hover_stack_map(tmp_path).as_uri(), wait_until='domcontentloaded')
+    wait_leaflet_ready(page)
+    # fitBounds animates. A basin added mid-zoom is projected into the wrong
+    # pixel space and its hit target covers the paleozone.
+    _wait_map_idle(page)
+    for name in ('Paleozones', 'Basins', 'Coastlines', 'Data points'):
+        if overlay_checked(page, name) is not True:
+            toggle_overlay(page, name)
+    _wait_map_idle(page)
+
+    spots = page.evaluate(
+        """() => {
+          let map = null;
+          for (const key of Object.keys(window)) {
+            const value = window[key];
+            if (value && typeof value.eachLayer === 'function' && value._container) {
+              map = value;
+              break;
+            }
+          }
+          const origin = map.getContainer().getBoundingClientRect();
+          function spot(lat, lon) {
+            const cp = map.latLngToContainerPoint([lat, lon]);
+            const el = document.elementFromPoint(origin.left + cp.x, origin.top + cp.y);
+            return {
+              x: cp.x,
+              y: cp.y,
+              className: el ? String(el.getAttribute('class') || '') : '',
+            };
+          }
+          return {
+            paleo: spot(4, 0),
+            basin: spot(1, -1),
+            point: spot(0, 0),
+          };
+        }"""
+    )
+    assert 'leaflet-interactive' not in spots['paleo']['className'], spots
+    assert 'leaflet-interactive' in spots['basin']['className'], spots
+    assert 'pcvs-point' in spots['point']['className'], spots
+
+    _hover_map(page, spots['paleo'])
+    page.locator('.leaflet-tooltip').wait_for(state='hidden')
+
+    _hover_map(page, spots['basin'])
+    page.locator('.leaflet-tooltip').wait_for()
+    basin_tip = page.locator('.leaflet-tooltip').inner_text()
+    assert page.locator('.leaflet-tooltip').count() == 1
+    assert 'Jatoba' in basin_tip
+    assert 'TestFm' not in basin_tip
+
+    _hover_map(page, spots['point'])
+    page.wait_for_function(
+        """() => {
+          const tips = document.querySelectorAll('.leaflet-tooltip');
+          return tips.length === 1 && (tips[0].textContent || '').includes('TestFm');
+        }"""
+    )
+    point_tip = page.locator('.leaflet-tooltip').inner_text()
+    assert 'TestFm' in point_tip
+    assert 'Basin:' not in point_tip
 
 
 @pytest.mark.parametrize('age', representative_ages())

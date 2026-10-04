@@ -1,0 +1,5 @@
+# Paleozone hover shows nothing
+
+A Paleozone polygon covers most of the reconstruction. With every overlay on, its tooltip was what the cursor hit, so the basin name and the plotted point never appeared. The belts stay drawn and stay on their own checkbox. They are not a hover target: no tooltip, and the path does not take pointer events, so the cursor falls through. A hover then shows the basin name, or the plotted point when the cursor is on a marker. The point is kept above the basin, so the point wins. The coastline tooltip stays; it is a thin shore reference, not the belt that was covering the map.
+
+**Considered options:** (1) paleozones ignore the pointer and carry no tooltip, and the point stays above the basin; (2) drop only the tooltip and leave the polygons interactive; (3) turn paleozones off by default; (4) also drop the coastline tooltip. (2) still swallows the hover, so the basin and the point underneath never see it. (3) hides the belts the reader wanted to leave on. (4) removes the shore name, which was not the layer in the way.
