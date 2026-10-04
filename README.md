@@ -84,7 +84,7 @@ runs live PDF export. Extra pytest flags go after `--`, for example
   the basin shows its name; a click on a data point still shows the point.
   Not every age has them.
   
-- **Coastlines**: Reconstructed coastline polylines
+- **Coastlines**: Reconstructed shoreline, drawn as a faint gray reference
 
 - **Raster**: Indicator-IDW class surface with rounded zone borders. Dry, semi-arid, and humid are solid colors. Semi-arid is the class that won the cell, not the average of dry and humid.
 

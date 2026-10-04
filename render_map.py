@@ -132,13 +132,16 @@ EDGE_SMOOTH_DEGREES = 2.0
 # Neutral canvas behind the coastlines and the interpolated raster.
 MAP_BACKGROUND = '#eef0f2'
 
-# Coastlines and the graticule, kept dark enough to read over the raster
-# without competing with the data points.
-COASTLINE_COLOR = '#334155'
+# Faint shoreline. A lighter slate than the old stroke, a little thinner,
+# and about half as opaque, so the coast stays a reference and the climate
+# classes stay what the eye follows. The graticule is a separate mark.
+COASTLINE_COLOR = '#475569'
+COASTLINE_WEIGHT_PX = 0.95
+COASTLINE_OPACITY = 0.48
 GRATICULE_COLOR = '#94a3b8'
 
 # Opacity of the interpolated surface. High enough for the palette to keep its
-# depth, low enough for the coastlines underneath to stay legible.
+# depth. The coastline is drawn on top of it, faint on purpose.
 RASTER_OPACITY = 0.78
 
 # Width, as a fraction of the shorter side, over which the interpolated surface
@@ -930,6 +933,17 @@ def with_paleozone_tooltip_labels(geojson_data):
         props = feature.setdefault('properties', {})
         props['Paleozone'] = paleozone_display_label(props)
     return labeled
+
+
+def coastline_style(feature):
+    """Faint gray stroke. A reference for the shore, not a data mark."""
+    return {
+        'color': COASTLINE_COLOR,
+        'weight': COASTLINE_WEIGHT_PX,
+        'opacity': COASTLINE_OPACITY,
+        'lineCap': 'round',
+        'lineJoin': 'round',
+    }
 
 
 def basin_outline_style(feature):
@@ -2799,7 +2813,7 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
 
             function drawPolyline(doc, layer) {
                 var opt = layer.options || {};
-                var color = hexRgb(opt.color || '#334155');
+                var color = hexRgb(opt.color || __COASTLINE_COLOR__);
                 var weight = (opt.weight != null ? opt.weight : 1) * PX;
                 var opacity = opt.opacity != null ? opt.opacity : 1;
                 var closed = (typeof L.Polygon === 'function' && layer instanceof L.Polygon);
@@ -3034,7 +3048,7 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                 });
             });
         })();
-    """, config=config)
+    """, config=config, coastline_color=json.dumps(COASTLINE_COLOR))
 
 
 def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.html', 
@@ -3124,8 +3138,8 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     
     # Add GeoJSON layers. Order is raster (already on the map) → Paleozones →
     # Coastlines → Basin outlines → Data points. Belts sit on the raster, the
-    # shoreline stays readable on top of them, and basin limits sit above the
-    # shore so a shared edge is still visible. Markers stay on top.
+    # shoreline sits on top of them as a faint reference, and basin limits sit
+    # above the shore so a shared edge is still visible. Markers stay on top.
     print("Adding GeoJSON layers...")
 
     if paleozones_data and paleozones_data.get('features'):
@@ -3148,13 +3162,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
         coastline_data,
         name=LAYER_COASTLINES,
         smooth_factor=1.3,
-        style_function=lambda feature: {
-            'color': COASTLINE_COLOR,
-            'weight': 1.05,
-            'opacity': 0.88,
-            'lineCap': 'round',
-            'lineJoin': 'round',
-        },
+        style_function=coastline_style,
         tooltip=folium.GeoJsonTooltip(
             fields=['NAME', 'TIME'],
             aliases=['Location:', 'Age (Ma):'],
