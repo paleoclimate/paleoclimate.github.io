@@ -80,16 +80,14 @@ def test_paleozone_layer_does_not_take_hover(tmp_path):
     assert '"interactive": false' in html
 
 
-def test_coastline_is_a_faint_reference():
+def test_coastline_is_the_dark_shore():
     styled = renderer.coastline_style({})
-    assert styled['color'] == renderer.COASTLINE_COLOR
-    assert styled['weight'] == renderer.COASTLINE_WEIGHT_PX
-    assert styled['opacity'] == renderer.COASTLINE_OPACITY
-    assert styled['opacity'] < 0.5
-    assert styled['weight'] < 1.05
+    assert styled['color'] == renderer.COASTLINE_COLOR == '#334155'
+    assert styled['weight'] == renderer.COASTLINE_WEIGHT_PX == 1.05
+    assert styled['opacity'] == renderer.COASTLINE_OPACITY == 0.88
     assert styled['lineCap'] == 'round'
     assert styled['lineJoin'] == 'round'
-    assert renderer._hex_to_rgb(styled['color']) > renderer._hex_to_rgb('#334155')
+    assert renderer._hex_to_rgb(styled['color']) <= renderer._hex_to_rgb('#334155')
 
 
 def test_basin_outlines_are_a_stroke_and_keep_only_the_name():
@@ -99,7 +97,13 @@ def test_basin_outlines_are_a_stroke_and_keep_only_the_name():
     styled = renderer.basin_outline_style({})
     assert styled['fill'] is True
     assert styled['fillOpacity'] == 0
-    assert styled['color'] == renderer.BASIN_OUTLINE_COLOR
+    assert styled['color'] == renderer.BASIN_OUTLINE_COLOR == '#94a3b8'
+    assert styled['opacity'] == renderer.BASIN_OUTLINE_OPACITY == 0.40
+    assert styled['weight'] == renderer.BASIN_OUTLINE_WEIGHT_PX == 1.35
+    red, green, blue = renderer._hex_to_rgb(styled['color'])
+    assert max(red, green, blue) - min(red, green, blue) < 40
+    assert styled['opacity'] < renderer.COASTLINE_OPACITY
+    assert renderer._hex_to_rgb(styled['color']) > renderer._hex_to_rgb(renderer.COASTLINE_COLOR)
     displayed = renderer.basin_outline_for_display({
         'type': 'FeatureCollection',
         'features': [{
