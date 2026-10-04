@@ -8,6 +8,8 @@ import json
 
 import render_map as renderer
 
+from tests.helpers import write_hover_stack_map
+
 
 def _write_geojson(path, features=None):
     path.write_text(
@@ -70,6 +72,12 @@ def test_paleozone_labels_normalize_humid_typo():
     })
     assert labeled['features'][0]['properties']['Paleozone'] == 'Humid'
     assert labeled['features'][0]['properties']['Paleozona'] == 'humid'
+
+
+def test_paleozone_layer_does_not_take_hover(tmp_path):
+    html = write_hover_stack_map(tmp_path).read_text(encoding='utf-8')
+    assert 'Paleozone:' not in html
+    assert '"interactive": false' in html
 
 
 def test_coastline_is_a_faint_reference():

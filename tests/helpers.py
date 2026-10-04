@@ -16,6 +16,69 @@ LAYER_NAMES = ('Raster', 'Coastlines', 'Data points', 'Color stats')
 COMPARISON_AGES = {105, 115}
 STORAGE_KEY = 'pcvs:age'
 
+
+def _ring(west, south, east, north):
+    return [[west, south], [east, south], [east, north], [west, north], [west, south]]
+
+
+def write_hover_stack_map(directory: Path) -> Path:
+    """Tiny map: a paleozone belt, one basin, one point, a shore around them.
+
+    The point sits inside the basin. A spot north of the basin is paleozone
+    only. The shore is the outer ring, so those interior spots are not on it.
+    """
+    import render_map as renderer
+
+    points = {
+        'type': 'FeatureCollection',
+        'features': [{
+            'type': 'Feature',
+            'properties': {
+                'ID': '1',
+                'Formation': 'TestFm',
+                'Basin_Sub_': 'Jatoba',
+                'Country': 'Brazil',
+                'Climate_Cl': 'H',
+                'TIME': 100,
+            },
+            'geometry': {'type': 'Point', 'coordinates': [0, 0]},
+        }],
+    }
+    coast = {
+        'type': 'FeatureCollection',
+        'features': [{
+            'type': 'Feature',
+            'properties': {'NAME': 'Shore', 'TIME': 100},
+            'geometry': {'type': 'LineString', 'coordinates': _ring(-8, -8, 8, 8)},
+        }],
+    }
+    paleozones = {
+        'type': 'FeatureCollection',
+        'features': [{
+            'type': 'Feature',
+            'properties': {'Paleozona': 'Humid'},
+            'geometry': {'type': 'Polygon', 'coordinates': [_ring(-6, -6, 6, 6)]},
+        }],
+    }
+    basins = {
+        'type': 'FeatureCollection',
+        'features': [{
+            'type': 'Feature',
+            'properties': {'BASIN_NAME': 'Jatoba', 'EXP_STATUS': 'Little Explored'},
+            'geometry': {'type': 'Polygon', 'coordinates': [_ring(-2, -2, 2, 2)]},
+        }],
+    }
+    output = Path(directory) / 'hover-stack.html'
+    renderer.create_map(
+        points,
+        coast,
+        output_file=str(output),
+        paleozones_data=paleozones,
+        basins_data=basins,
+    )
+    return output
+
+
 FIND_LEAFLET_MAP = """
 () => {
   for (const key of Object.keys(window)) {
