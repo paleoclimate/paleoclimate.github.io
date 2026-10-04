@@ -1,5 +1,7 @@
 # The coastline is a faint reference stroke
 
+Superseded by [docs/adr/0018-basin-outlines-recede-coastline-stays-dark.md](0018-basin-outlines-recede-coastline-stays-dark.md). The faint gray moved to the basin outlines, and the coastline is the dark shore again.
+
 Researchers still need the reconstructed shoreline on the published map, and they asked for it to stay out of the way: a weaker line, a lighter gray, transparent enough that the climate classes remain what the eye follows. The coastline stays on every map, in the same layer order, above the raster and below the basin outlines and the markers. The stroke is slate-600 (`#475569`), 0.95 px, opacity 0.48. The previous stroke was slate-700 (`#334155`) at 1.05 px and opacity 0.88, dark enough to compete with the data points. On the 100 Ma map that reads as a thin gray shore you can still trace around South America and Africa. The vector PDF reads the same path style, so a download matches the map.
 
 **Considered options:** (1) this faint stroke; (2) drop the coastline; (3) slate-500 (`#64748b`) at 0.8 px and opacity 0.38; (4) a lighter gray kept nearly opaque. (2) removes a reference they said they want. (3) was the first cut and the shore disappeared on the humid and semi-arid classes, so the notion of the coastline was gone. (4) is a weaker gray but not the transparency they asked for.
