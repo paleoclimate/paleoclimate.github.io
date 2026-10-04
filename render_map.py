@@ -81,11 +81,11 @@ PALEOZONE_FILL_OPACITY = 0.28
 PALEOZONE_STROKE_OPACITY = 0.85
 PALEOZONE_WEIGHT_PX = 1.0
 
-# Wine stroke. Not the slate coastline and not a climate colour, so a basin
-# limit stays readable when it crosses the shore or a class zone.
-BASIN_OUTLINE_COLOR = '#6b2d4a'
+# Faint gray stroke. Transparent enough that a toggled basin limit does not
+# compete with the shore or the climate classes. Weight stays a contour.
+BASIN_OUTLINE_COLOR = '#94a3b8'
 BASIN_OUTLINE_WEIGHT_PX = 1.35
-BASIN_OUTLINE_OPACITY = 0.92
+BASIN_OUTLINE_OPACITY = 0.40
 BASIN_OUTLINE_SHOW = False
 
 # Climate classification palette, shared by markers and the raster ramp.
@@ -132,16 +132,15 @@ EDGE_SMOOTH_DEGREES = 2.0
 # Neutral canvas behind the coastlines and the interpolated raster.
 MAP_BACKGROUND = '#eef0f2'
 
-# Faint shoreline. A lighter slate than the old stroke, a little thinner,
-# and about half as opaque, so the coast stays a reference and the climate
-# classes stay what the eye follows. The graticule is a separate mark.
-COASTLINE_COLOR = '#475569'
-COASTLINE_WEIGHT_PX = 0.95
-COASTLINE_OPACITY = 0.48
+# Dark shore, the stroke this atlas used before the faint-coast trial.
+# Slate-700 reads as the ordinary black coastline. The graticule is separate.
+COASTLINE_COLOR = '#334155'
+COASTLINE_WEIGHT_PX = 1.05
+COASTLINE_OPACITY = 0.88
 GRATICULE_COLOR = '#94a3b8'
 
 # Opacity of the interpolated surface. High enough for the palette to keep its
-# depth. The coastline is drawn on top of it, faint on purpose.
+# depth. The coastline is drawn on top of it, as the dark shore.
 RASTER_OPACITY = 0.78
 
 # Width, as a fraction of the shorter side, over which the interpolated surface
@@ -956,7 +955,7 @@ function(feature, layer) {
 
 
 def coastline_style(feature):
-    """Faint gray stroke. A reference for the shore, not a data mark."""
+    """Dark shore. The ordinary black coastline, not a faint reference."""
     return {
         'color': COASTLINE_COLOR,
         'weight': COASTLINE_WEIGHT_PX,
@@ -967,7 +966,7 @@ def coastline_style(feature):
 
 
 def basin_outline_style(feature):
-    """Wine stroke. The fill is invisible and only catches clicks inside the basin."""
+    """Faint gray stroke. The fill is invisible and only catches clicks inside the basin."""
     return {
         'color': BASIN_OUTLINE_COLOR,
         'weight': BASIN_OUTLINE_WEIGHT_PX,
@@ -3161,8 +3160,8 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     
     # Add GeoJSON layers. Order is raster (already on the map) → Paleozones →
     # Coastlines → Basin outlines → Data points. Belts sit on the raster, the
-    # shoreline sits on top of them as a faint reference, and basin limits sit
-    # above the shore so a shared edge is still visible. Markers stay on top.
+    # shoreline sits on top of them as the dark shore, and the faint gray basin
+    # limits sit above the shore so a shared edge is still visible. Markers stay on top.
     # Paleozones do not take the pointer, so a hover with every layer on is
     # the basin name or the plotted point, and the point wins.
     print("Adding GeoJSON layers...")
