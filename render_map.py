@@ -927,12 +927,32 @@ def paleozone_style(feature):
 
 
 def with_paleozone_tooltip_labels(geojson_data):
-    """Copy of ``geojson_data`` with a canonical `Paleozone` property for tooltips."""
+    """Copy of ``geojson_data`` with a canonical ``Paleozone`` property.
+
+    The map does not call this. Paleozones are paint only and have no tooltip.
+    """
     labeled = json.loads(json.dumps(geojson_data))
     for feature in labeled.get('features', []):
         props = feature.setdefault('properties', {})
         props['Paleozone'] = paleozone_display_label(props)
     return labeled
+
+
+# A paleozone covers the reconstruction. It is paint only: the cursor falls
+# through to a basin outline or a plotted point. Inline pointer-events beats
+# the `.leaflet-interactive` class if a later style pass adds it back.
+_PALEOZONE_PASS_THROUGH = folium.JsCode("""
+function(feature, layer) {
+    function disarm() {
+        layer.options.interactive = false;
+        if (!layer._path) return;
+        layer._path.style.pointerEvents = 'none';
+        if (window.L && L.DomUtil) L.DomUtil.removeClass(layer._path, 'leaflet-interactive');
+    }
+    layer.on('add', disarm);
+    disarm();
+}
+""")
 
 
 def coastline_style(feature):
@@ -977,7 +997,8 @@ def _keep_data_points_above_basins(m):
     """A basin overlay added later would cover the markers and steal their click.
 
     Data points have no GeoJSON feature. Basin paths do. Raising the points
-    after every overlay add keeps a click on a marker on the point popup.
+    after every overlay add keeps a click, and a hover, on the marker: the
+    point popup and the point tooltip win over the basin name.
     """
     macro = MacroElement()
     macro._template = Template("""
@@ -3062,8 +3083,10 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
 
     ``age_label`` and ``map_subtitle`` are accepted for caller compatibility;
     the viewer header is what names the reconstruction. Paleozones are omitted
-    when ``paleozones_data`` is missing or has no features. Basin outlines are
-    omitted the same way. They start hidden and do not change the map bounds.
+    when ``paleozones_data`` is missing or has no features. They are drawn and
+    toggleable, and they do not take hover: the cursor falls through to a
+    basin or a plotted point, and the point wins. Basin outlines are omitted
+    the same way when missing. They start hidden and do not change the map bounds.
     """
     
     # Calculate combined bounds
@@ -3140,21 +3163,20 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     # Coastlines → Basin outlines → Data points. Belts sit on the raster, the
     # shoreline sits on top of them as a faint reference, and basin limits sit
     # above the shore so a shared edge is still visible. Markers stay on top.
+    # Paleozones do not take the pointer, so a hover with every layer on is
+    # the basin name or the plotted point, and the point wins.
     print("Adding GeoJSON layers...")
 
     if paleozones_data and paleozones_data.get('features'):
         print("Adding Paleozones layer...")
         folium.GeoJson(
-            with_paleozone_tooltip_labels(paleozones_data),
+            paleozones_data,
             name=LAYER_PALEOZONES,
             show=True,
             smooth_factor=1.0,
             style_function=paleozone_style,
-            tooltip=folium.GeoJsonTooltip(
-                fields=['Paleozone'],
-                aliases=['Paleozone:'],
-                sticky=True
-            )
+            on_each_feature=_PALEOZONE_PASS_THROUGH,
+            interactive=False,
         ).add_to(m)
 
     # Add coastline layer
