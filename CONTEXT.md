@@ -1,6 +1,6 @@
 # Paleoclimate maps
 
-A reconstruction-age atlas of climate from geological points, reconstructed coastlines, and optional paleozone polygons.
+A reconstruction-age atlas of climate from geological points, reconstructed coastlines, optional paleozone polygons, and optional basin outlines.
 
 ## Language
 
@@ -26,4 +26,12 @@ _Avoid_: costa, linha de costa, coast
 
 **Paleozone**:
 A polygonal climate region at a reconstruction age, classified with the same climate class as data points (Humid, Semi-arid, or Dry). An age may have no Paleozones.
-_Avoid_: Paleozona, climate zone, climate class, polygon
+_Avoid_: Paleozona, climate zone, climate class, polygon, basin outline
+
+**Basin**:
+The sedimentary basin named on a data point. The basin filter shows or hides markers by this name.
+_Avoid_: basin outline, paleozone
+
+**Basin outline**:
+The polygonal limit of a sedimentary basin at a reconstruction age. An age may have no basin outlines.
+_Avoid_: basin, bacia, paleozone

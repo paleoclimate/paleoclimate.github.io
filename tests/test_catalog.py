@@ -51,12 +51,29 @@ def test_maps_catalog_is_well_formed():
                 assert href.endswith(f'_{scope}.pdf')
 
 
+def _html_age(path):
+    match = re.search(r'map_(\d+)_ma', path.name)
+    assert match, path.name
+    return int(match.group(1))
+
+
+def _published_idw_html_files():
+    import render_map as renderer
+
+    return [
+        path for path in idw_html_files()
+        if _html_age(path) not in renderer.VIEWER_HIDDEN_AGES
+    ]
+
+
 def test_catalog_ages_match_idw_html_files():
     maps = load_maps_catalog()
     catalog_paths = {entry['path'] for entry in maps}
-    disk_paths = {path.relative_to(REPO_ROOT).as_posix() for path in idw_html_files()}
+    disk_paths = {
+        path.relative_to(REPO_ROOT).as_posix() for path in _published_idw_html_files()
+    }
     assert catalog_paths == disk_paths, (
-        'index.html MAPS and GENERATED_IDW_MAPS/*.html drifted apart. '
+        'index.html MAPS and the published GENERATED_IDW_MAPS/*.html drifted apart. '
         'Regenerate the viewer with python render_map.py'
     )
     assert knn_html_files() == [], (
@@ -78,13 +95,20 @@ def test_every_idw_map_has_overlay_png():
 
 def test_catalog_ages_match_idw_map_files():
     catalog = set(catalog_ages())
-    idw_ages = set()
-    for path in idw_html_files():
-        match = re.search(r'map_(\d+)_ma', path.name)
-        assert match, path.name
-        idw_ages.add(int(match.group(1)))
+    idw_ages = {_html_age(path) for path in _published_idw_html_files()}
     assert catalog, 'No IDW maps in the catalog'
     assert catalog == idw_ages, f'Catalog ages {sorted(catalog)} != IDW ages {sorted(idw_ages)}'
+
+
+def test_hidden_ages_are_generated_and_omitted_from_the_viewer():
+    import render_map as renderer
+
+    hidden = set(renderer.VIEWER_HIDDEN_AGES)
+    assert hidden
+    assert set(catalog_ages()).isdisjoint(hidden)
+    disk_ages = {_html_age(path) for path in idw_html_files()}
+    missing = sorted(hidden - disk_ages)
+    assert not missing, f'Hidden ages were not generated: {missing}'
 
 
 def test_comparison_links_only_for_supported_ages():
@@ -140,6 +164,40 @@ def test_layer_names_match_renderer_constants():
     ):
         assert name in html
         assert name in LAYER_NAMES
+
+
+def test_basin_outlines_layer_is_optional_and_matches_source():
+    """Basins is a Folium overlay only when `{base}_basins.geojson` exists.
+
+    The checkbox starts off. Stale HTML from before this layer fails until
+    `render_map.py` is run again.
+    """
+    import render_map as renderer
+
+    assert renderer.LAYER_BASINS == 'Basins'
+    assert renderer.LAYER_BASINS not in LAYER_NAMES
+
+    geojson = REPO_ROOT / 'GEOJSON'
+    if not geojson.is_dir():
+        pytest.skip('GEOJSON/ is local and gitignored')
+
+    html_files = idw_html_files()
+    assert html_files, 'No generated maps to inspect'
+    mismatches = []
+    for path in html_files:
+        match = re.search(r'map_(\d+_ma)_', path.name)
+        assert match, path.name
+        base = match.group(1)
+        has_file = (geojson / f'{base}{renderer.GEOJSON_BASINS_SUFFIX}').is_file()
+        text = path.read_text(encoding='utf-8')
+        has_layer = f'"{renderer.LAYER_BASINS}"' in text
+        if has_file != has_layer:
+            mismatches.append(
+                f'{path.name}: basins file={has_file} layer={has_layer}'
+            )
+    assert not mismatches, 'Basins layer does not match source files:\n' + '\n'.join(
+        mismatches
+    )
 
 
 def test_paleozones_layer_is_optional_and_matches_source():
@@ -218,8 +276,11 @@ def test_geotiffs_exist_for_catalog_ages():
     geotiff_dir = REPO_ROOT / 'GENERATED_GEOTIFFS'
     if not geotiff_dir.is_dir():
         raise AssertionError('GENERATED_GEOTIFFS/ is missing')
+    import render_map as renderer
+
     missing = []
-    for age in catalog_ages():
+    ages = set(catalog_ages()) | set(renderer.VIEWER_HIDDEN_AGES)
+    for age in sorted(ages):
         knn = list(geotiff_dir.glob(f'{age}_ma_knn_idw_*.tif'))
         if not knn:
             missing.append(f'{age} Ma KNN + IDW GeoTIFF')
@@ -306,11 +367,17 @@ def test_generated_maps_keep_basin_accents():
 
 
 def test_every_html_and_pdf_map_was_generated():
+    import render_map as renderer
+
     idw = idw_html_files()
     assert idw, 'No IDW HTML maps; run python render_map.py --pdf'
     catalog_paths = {entry['path'] for entry in load_maps_catalog()}
-    idw_paths = {path.relative_to(REPO_ROOT).as_posix() for path in idw}
-    assert catalog_paths == idw_paths
+    published_paths = {
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in idw
+        if _html_age(path) not in renderer.VIEWER_HIDDEN_AGES
+    }
+    assert catalog_paths == published_paths
 
     missing = []
     for html in idw:
