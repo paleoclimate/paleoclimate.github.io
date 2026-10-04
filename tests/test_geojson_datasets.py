@@ -72,6 +72,18 @@ def test_paleozone_labels_normalize_humid_typo():
     assert labeled['features'][0]['properties']['Paleozona'] == 'humid'
 
 
+def test_coastline_is_a_faint_reference():
+    styled = renderer.coastline_style({})
+    assert styled['color'] == renderer.COASTLINE_COLOR
+    assert styled['weight'] == renderer.COASTLINE_WEIGHT_PX
+    assert styled['opacity'] == renderer.COASTLINE_OPACITY
+    assert styled['opacity'] < 0.5
+    assert styled['weight'] < 1.05
+    assert styled['lineCap'] == 'round'
+    assert styled['lineJoin'] == 'round'
+    assert renderer._hex_to_rgb(styled['color']) > renderer._hex_to_rgb('#334155')
+
+
 def test_basin_outlines_are_a_stroke_and_keep_only_the_name():
     assert renderer.LAYER_BASINS == 'Basins'
     assert renderer.BASIN_OUTLINE_SHOW is False
