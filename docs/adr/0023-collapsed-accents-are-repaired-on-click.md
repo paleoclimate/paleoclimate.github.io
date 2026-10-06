@@ -1,0 +1,5 @@
+# Collapsed accents are repaired on the point popup
+
+The basin filter already restored names whose missing letter had been stored as `?` (`S?o` to `São`). A later export also ate the character after that `?`, so the same names reached the point popup as `S?` and `Alc?tara`. Clicking a point showed those broken formation and locality names even when the basin line was already repaired. The repair list is applied again with that following character removed, and a short list of citation and word fragments (`Gon?lves`, `C?doba`, `?uvial`) is restored the same way. A `?` before a digit, with a space in front, is read back as `±`. A question mark that is actually a question mark (`SAG(?)`, `humid?`) stays.
+
+**Considered options:** (1) extend the existing replacement list with the collapsed forms; (2) leave popup titles as stored and only repair `Basin_Sub_`. (2) is what the map already did, and the broken name on click was still there. En-dashes that swallowed the next letter in a lithology note are not guessed back into a word.

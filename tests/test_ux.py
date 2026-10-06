@@ -29,7 +29,6 @@ def _header_controls(page):
         'next': page.locator('#nextBtn'),
         'range': page.locator('#ageRange'),
         'pdf': page.locator('#pdfBtn'),
-        'scope': page.locator('#scopeToggle'),
     }
 
 
@@ -68,7 +67,7 @@ def test_header_controls_do_not_overlap_on_desktop(page, base_url):
         ('combo', 'prev'),
         ('prev', 'range'),
         ('range', 'next'),
-        ('pdf', 'scope'),
+        ('next', 'pdf'),
     )
     for left, right in pairs:
         assert not boxes_overlap(boxes[left], boxes[right]), f'{left} overlaps {right}'

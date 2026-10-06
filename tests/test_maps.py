@@ -56,8 +56,7 @@ def test_map_controls_and_layers(page, base_url, age):
         assert overlay_checked(frame, name) is True
 
     import render_map as renderer
-    if any(renderer.LAYER_PALEOZONES in label for label in labels):
-        assert overlay_checked(frame, renderer.LAYER_PALEOZONES) is True
+    assert not any(renderer.LAYER_PALEOZONES in label for label in labels), labels
 
     state = frame.evaluate(MAP_STATE)
     assert state is not None
@@ -200,14 +199,16 @@ def _wait_map_idle(page):
     )
 
 
-def test_hover_shows_the_basin_or_the_point_and_skips_paleozones(page, tmp_path):
-    """All layers on: paleozone hover is empty, basin names itself, point wins."""
+def test_hover_shows_the_basin_or_the_point(page, tmp_path):
+    """Basin names itself. A plotted point wins. Paleozones are not a layer."""
     page.goto(write_hover_stack_map(tmp_path).as_uri(), wait_until='domcontentloaded')
     wait_leaflet_ready(page)
     # fitBounds animates. A basin added mid-zoom is projected into the wrong
-    # pixel space and its hit target covers the paleozone.
+    # pixel space and its hit target misses the interior.
     _wait_map_idle(page)
-    for name in ('Paleozones', 'Basins', 'Coastlines', 'Data points'):
+    labels = layer_labels(page)
+    assert 'Paleozones' not in labels
+    for name in ('Basins', 'Coastlines', 'Data points'):
         if overlay_checked(page, name) is not True:
             toggle_overlay(page, name)
     _wait_map_idle(page)
@@ -343,8 +344,10 @@ def test_color_stats_cover_the_three_climate_classes(page, base_url, age):
     panel = frame.locator('.color-stats-control')
     text = panel.inner_text()
     lowered = text.lower()
-    for label in ('dry', 'semi-arid', 'humid', 'raster coverage'):
+    for label in ('dry', 'semi-arid', 'humid', 'raster coverage', 'data points'):
         assert label in lowered, f'{label} missing from color stats'
+    count_text = panel.locator('.pcvs-point-count strong').inner_text().replace(',', '')
+    assert int(count_text) > 0
     percents = _color_stats_percents(frame)
     assert len(percents) == 3
     assert all(value >= 0 for value in percents)
@@ -361,7 +364,14 @@ def test_data_point_popup_describes_a_formation(page, base_url, age):
     text = popup.first.inner_text()
     assert 'Basin' in text
     assert 'Climate' in text
+    assert 'Reference' in text
+    assert 'Paleoenvironment' not in text
     assert any(word in text for word in ('Humid', 'Dry', 'Semi-arid', 'Data point'))
+    popup.locator('summary').first.click()
+    opened = popup.first.inner_text()
+    assert 'Paleoenvironment' in opened
+    assert 'Dating Evidence' in opened
+    assert 'Lithology' in opened
 
 
 @pytest.mark.parametrize('age', representative_ages())
@@ -604,11 +614,10 @@ def test_pre_rendered_pdfs_are_served(page, base_url):
 @pytest.mark.slow
 def test_live_pdf_export_from_viewer(page, base_url):
     goto_viewer(page, base_url)
-    page.locator('#rasterOnly').uncheck()
     with page.expect_download(timeout=90_000) as download_info:
         page.locator('#pdfBtn').click()
     download = download_info.value
-    assert download.suggested_filename.endswith('.pdf')
+    assert download.suggested_filename.endswith('_raster.pdf')
     body = download.path()
     assert body, 'Live PDF download did not land on disk'
     assert body.stat().st_size > 1000
