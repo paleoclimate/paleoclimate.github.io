@@ -1195,15 +1195,26 @@ def _point_fact_rows(props):
 
 
 def _popup_more(props):
-    """Paleoenvironment, dating evidence and lithology, behind a plus."""
+    """Paleoenvironment, dating evidence and lithology, behind a plus.
+
+    Each note sits under its label, across the card. The short fact list
+    stays a two-column grid; these three fields are paragraphs.
+    """
     props = props or {}
-    rows = _popup_dl(
-        (label, props.get(key)) for key, label in POINT_MORE_FIELDS
-    )
+    fields = []
+    for key, label in POINT_MORE_FIELDS:
+        plain = _popup_plain(props.get(key))
+        klass = ' pcvs-more-value pcvs-na' if plain == 'N/A' else ' pcvs-more-value'
+        fields.append(
+            '<div class="pcvs-more-field">'
+            f'<div class="pcvs-more-label">{html.escape(label)}</div>'
+            f'<div class="{klass.strip()}">{_popup_text(props.get(key))}</div>'
+            '</div>'
+        )
     return (
         '<details class="pcvs-more">'
         '<summary aria-label="More about this point">+</summary>'
-        f'<dl>{rows}</dl></details>'
+        f'<div class="pcvs-more-fields">{"".join(fields)}</div></details>'
     )
 
 
@@ -2503,6 +2514,7 @@ MAP_THEME_CSS = """
         .pcvs-popup {
             font-size: 12px;
             color: var(--pcvs-ink);
+            min-width: 260px;
             max-height: 280px;
             overflow-y: auto;
         }
@@ -2517,7 +2529,7 @@ MAP_THEME_CSS = """
         .pcvs-popup-name { font-weight: 600; margin-bottom: 4px; }
         .pcvs-popup dl {
             display: grid;
-            grid-template-columns: minmax(0, max-content) minmax(2.75em, 1fr);
+            grid-template-columns: auto minmax(0, 1fr);
             gap: 2px 10px;
             margin: 0;
         }
@@ -2574,7 +2586,26 @@ MAP_THEME_CSS = """
             font-size: 16px;
             line-height: 1;
         }
-        .pcvs-more > dl { margin-top: 8px; }
+        .pcvs-more-fields {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .pcvs-more-label {
+            color: var(--pcvs-muted);
+            font-size: 11px;
+            line-height: 1.3;
+        }
+        .pcvs-more-value {
+            margin-top: 1px;
+            line-height: 1.45;
+            overflow-wrap: break-word;
+        }
+        .pcvs-more-value.pcvs-na {
+            white-space: nowrap;
+            overflow-wrap: normal;
+        }
 
         /* Slim scrollbars for the panels that can overflow */
         .pcvs-scroll,
@@ -3603,7 +3634,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                     max-height: 56vh;
                     box-sizing: border-box;
                     flex-direction: column;
-                    padding: 9px 10px 10px;
+                    padding: 10px 12px 12px;
                     background: var(--pcvs-surface);
                     border: 1px solid var(--pcvs-line);
                     border-radius: var(--pcvs-radius);
@@ -3615,10 +3646,11 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                 .basin-filter-control.open .basin-filter-body { display: flex; }
                 .basin-filter-search {
                     flex: none;
+                    align-self: stretch;
                     box-sizing: border-box;
-                    width: 100%;
-                    max-width: 100%;
+                    width: auto;
                     min-width: 0;
+                    max-width: 100%;
                     padding: 5px 8px;
                     margin-bottom: 7px;
                     font: inherit;

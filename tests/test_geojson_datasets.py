@@ -158,12 +158,13 @@ def test_point_popup_shows_the_reference_and_tucks_the_notes(tmp_path):
     assert '<dt>Reference</dt>' in html_text
     assert 'Gonçalves' in html_text
     assert 'class="pcvs-more"' in html_text
+    assert 'pcvs-more-value' in html_text
     assert 'Paleoenvironment' in html_text
-    assert 'class="pcvs-na"' in html_text
+    assert 'pcvs-na' in html_text
     assert 'max-height: 280px' in html_text
-    assert 'min-width: 0' in html_text
+    assert 'min-width: 260px' in html_text
     assert 'Dating Evidence' in html_text
-    assert '>Lithology</dt>' in html_text
+    assert 'pcvs-more-label">Lithology' in html_text
     assert '109 ± 18 Ma' in html_text
     assert 'Data points' in html_text
     assert '<strong>1</strong>' in html_text

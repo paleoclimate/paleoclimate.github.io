@@ -309,11 +309,12 @@ def test_basin_filter_search_clear_and_restore(page, base_url, age):
           const card = document.querySelector('.basin-filter-body');
           const field = input.getBoundingClientRect();
           const panel = card.getBoundingClientRect();
-          return field.left >= panel.left - 1 && field.right <= panel.right + 1
+          return (panel.right - field.right) >= 8
+              && (field.left - panel.left) >= 8
               && field.width > 40;
         }"""
     )
-    assert contained, 'Basin search spills out of the filter card'
+    assert contained, 'Basin search has no inset from the filter card'
 
     badge = frame.locator('.basin-filter-count').inner_text().strip()
     assert re_match_count(badge)
@@ -395,6 +396,17 @@ def test_data_point_popup_describes_a_formation(page, base_url, age):
     if na.count():
         lines = na.first.evaluate('el => el.getClientRects().length')
         assert lines == 1, 'N/A wrapped onto more than one line'
+    wide = frame.evaluate(
+        """() => {
+          const card = document.querySelector('.pcvs-popup');
+          const note = document.querySelector('.pcvs-more-value');
+          if (!card || !note) return false;
+          const cardBox = card.getBoundingClientRect();
+          const noteBox = note.getBoundingClientRect();
+          return noteBox.width >= cardBox.width * 0.8 && cardBox.width >= 240;
+        }"""
+    )
+    assert wide, 'The plus notes are still squeezed into a narrow column'
 
 
 @pytest.mark.parametrize('age', representative_ages())
