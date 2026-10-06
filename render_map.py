@@ -1,17 +1,19 @@
 """
 Render paleogeographic maps from geological points using Folium.
 This script:
-1. Loads GeoJSON files with points, coastlines, optional paleozones, and optional basin outlines
+1. Loads GeoJSON files with points, coastlines, and optional basin outlines
 2. Condenses data points, then paints an indicator-IDW class raster with
    rounded zone borders
 3. Generates:
-   - Map 1: Original data (points + coastlines + optional paleozones + optional basin outlines + original raster if exists)
-   - Map 2: IDW class raster (points + coastlines + optional paleozones + optional basin outlines)
+   - Map 1: Original data (points + coastlines + optional basin outlines + original raster if exists)
+   - Map 2: IDW class raster (points + coastlines + optional basin outlines)
 """
 
 import argparse
 import copy
+import html
 import math
+import re
 import sys
 import threading
 import time
@@ -63,6 +65,15 @@ LAYER_COASTLINES = 'Coastlines'
 LAYER_POINTS = 'Data points'
 LAYER_COLOR_STATS = 'Color stats'
 
+# Point-popup columns. Reference is always visible. The other three open
+# from a plus on that point. Keys are the spreadsheet headers.
+POINT_REFERENCE_FIELD = 'REF(Authors, Year)'
+POINT_MORE_FIELDS = (
+    ('Paleoenvironment', 'Paleoenvironment'),
+    ('Dating evidence', 'Dating Evidence'),
+    ('Lithology, structures, paleowind', 'Lithology'),
+)
+
 # Generated onto disk, omitted from the viewer age list.
 VIEWER_HIDDEN_AGES = frozenset({145})
 
@@ -86,7 +97,7 @@ PALEOZONE_WEIGHT_PX = 1.0
 BASIN_OUTLINE_COLOR = '#94a3b8'
 BASIN_OUTLINE_WEIGHT_PX = 1.35
 BASIN_OUTLINE_OPACITY = 0.40
-BASIN_OUTLINE_SHOW = False
+BASIN_OUTLINE_SHOW = True
 
 # Climate classification palette, shared by markers and the raster ramp.
 # Muted cartographic tones: saturated primaries read as a toy map, and the
@@ -228,9 +239,9 @@ PDF_MIN_WIDTH_PX = 640
 PDF_MAX_WIDTH_PX = 2200
 
 # Client-side export dependencies, loaded on demand from a CDN.
-# The full-map PDF is drawn as vectors (circles, coastlines) so the points
-# stay editable. html-to-image is only used for the raster-only crop, which
-# may stay a bitmap, and for the small coverage panel on a vector page.
+# The download is a vector PDF of the raster extent (circles, coastlines,
+# basin outlines, graticule labels). html-to-image is only used for the
+# small coverage panel on that page. The climate surface stays an image.
 HTML_TO_IMAGE_URL = 'https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js'
 JSPDF_URL = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js'
 
@@ -621,9 +632,86 @@ _ACCENT_REPAIRS = {
     'R?o ': 'Río ',
 }
 
-_ACCENT_REPAIR_ITEMS = tuple(
-    sorted(_ACCENT_REPAIRS.items(), key=lambda item: len(item[0]), reverse=True)
-)
+# Names the later export collapsed further, plus citation and word fragments
+# that show up when a point is clicked. Longer keys win, so `A? El Guettar`
+# stays Aïn and a bare `A?` can still become Açu.
+_POPUP_TEXT_REPAIRS = {
+    'Embor?S? Jos?N/A': 'Emboré/São José',
+    'Marnes ?Gypse Inf?ieures': 'Marnes à gypse inférieures',
+    'the A? Abbes Formation': 'the Aïn Abbes Formation',
+    'A? Lamine': 'Aïn Lamine',
+    'Gon?lves': 'Gonçalves',
+    'Rodr?uez': 'Rodríguez',
+    'Guti?rez': 'Gutiérrez',
+    'Mart?ez': 'Martínez',
+    'Pr?paro': 'Prámparo',
+    'Narv?z': 'Narváez',
+    'C?doba': 'Córdoba',
+    'Su?ez': 'Suárez',
+    'Ara?o': 'Araújo',
+    'Varej?': 'Varejão',
+    'Concei?o': 'Conceição',
+    'Ferr?et': 'Ferré et',
+    'Poir?et': 'Poiré et',
+    'J?ior': 'Júnior',
+    'Albert?': 'Albertão',
+    'Agnol?': 'Agnolín',
+    'M?dez': 'Méndez',
+    'G?ez': 'Gómez',
+    'Fran?': 'França',
+    'Pedr?': 'Pedrão',
+    'Pap?': 'Papú',
+    'Zim?': 'Zimam',
+    '?uvial': 'fluvial',
+    'in?uence': 'influence',
+    '?nally': 'finally',
+    '?eltaic': 'deltaic',
+    '?agoonal': 'lagoonal',
+    '?ne-grained': 'fine-grained',
+    '?ne grained': 'fine grained',
+}
+
+# "109 ?18 Ma" stored a plus-minus and the space after it as one '?'.
+_LOST_PLUS_MINUS = re.compile(r' \?(?=\d)')
+
+
+def _collapse_following_character(text):
+    """Drop the character after each '?', matching the later GeoJSON export.
+
+    The first export turned one non-ASCII character into '?'. A later export
+    also ate the following character, so 'S?o Mateus' became 'S? Mateus'.
+    """
+    pieces = []
+    index = 0
+    while index < len(text):
+        if text[index] == '?':
+            pieces.append('?')
+            index += 2 if index + 1 < len(text) else 1
+        else:
+            pieces.append(text[index])
+            index += 1
+    return ''.join(pieces)
+
+
+def _merged_accent_repairs(*groups):
+    """Explicit replacements, plus the same list with the next character eaten."""
+    merged = {}
+    for group in groups:
+        merged.update(group)
+    derived = {}
+    for broken, fixed in list(merged.items()):
+        collapsed = _collapse_following_character(broken)
+        if collapsed == broken or '?' not in collapsed or collapsed in merged:
+            continue
+        previous = derived.get(collapsed)
+        if previous is not None and previous != fixed:
+            continue
+        derived[collapsed] = fixed
+    merged.update(derived)
+    return tuple(sorted(merged.items(), key=lambda item: len(item[0]), reverse=True))
+
+
+_ACCENT_REPAIR_ITEMS = _merged_accent_repairs(_ACCENT_REPAIRS, _POPUP_TEXT_REPAIRS)
 
 
 def restore_lost_accents(text):
@@ -634,7 +722,7 @@ def restore_lost_accents(text):
     for broken, fixed in _ACCENT_REPAIR_ITEMS:
         if broken in repaired:
             repaired = repaired.replace(broken, fixed)
-    return repaired
+    return _LOST_PLUS_MINUS.sub(' ± ', repaired)
 
 
 def restore_geojson_accents(data):
@@ -1062,6 +1150,92 @@ def _climate_name(code):
     return f'{label} ({code})' if label else code
 
 
+def _popup_plain(value):
+    """Display text for one popup cell, before HTML escaping."""
+    if value is None:
+        text = 'N/A'
+    else:
+        text = str(value).strip()
+        if not text:
+            text = 'N/A'
+    text = restore_lost_accents(text)
+    if text in {'?', '?N/A'}:
+        text = 'N/A'
+    return text
+
+
+def _popup_text(value):
+    """Escape one popup cell and restore accents the export stored as '?'."""
+    escaped = html.escape(_popup_plain(value), quote=True)
+    return escaped.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
+
+
+def _popup_dl(pairs):
+    rows = []
+    for label, value in pairs:
+        klass = ' class="pcvs-na"' if _popup_plain(value) == 'N/A' else ''
+        rows.append(
+            f'<dt>{html.escape(label)}</dt><dd{klass}>{_popup_text(value)}</dd>'
+        )
+    return ''.join(rows)
+
+
+def _point_fact_rows(props):
+    """Fields always visible on a data-point popup."""
+    props = props or {}
+    age = props.get('TIME') or 'N/A'
+    climate = get_climate_class(props) or 'N/A'
+    return (
+        ('Basin', props.get('Basin_Sub_')),
+        ('Country', props.get('Country')),
+        ('Climate', _climate_name(climate)),
+        ('Age', f'{age} Ma'),
+        ('Reference', props.get(POINT_REFERENCE_FIELD)),
+    )
+
+
+def _popup_more(props):
+    """Paleoenvironment, dating evidence and lithology, behind a plus.
+
+    Each note sits under its label, across the card. The short fact list
+    stays a two-column grid; these three fields are paragraphs.
+    """
+    props = props or {}
+    fields = []
+    for key, label in POINT_MORE_FIELDS:
+        plain = _popup_plain(props.get(key))
+        klass = ' pcvs-more-value pcvs-na' if plain == 'N/A' else ' pcvs-more-value'
+        fields.append(
+            '<div class="pcvs-more-field">'
+            f'<div class="pcvs-more-label">{html.escape(label)}</div>'
+            f'<div class="{klass.strip()}">{_popup_text(props.get(key))}</div>'
+            '</div>'
+        )
+    return (
+        '<details class="pcvs-more">'
+        '<summary aria-label="More about this point">+</summary>'
+        f'<div class="pcvs-more-fields">{"".join(fields)}</div></details>'
+    )
+
+
+def _point_popup_body(props, dot_color=None):
+    dot = ''
+    if dot_color:
+        dot = f'<span class="pcvs-dot" style="background:{html.escape(dot_color)}"></span>'
+    return (
+        f'<div class="pcvs-popup-name">{dot}{_popup_text((props or {}).get("Formation"))}</div>'
+        f'<dl>{_popup_dl(_point_fact_rows(props))}</dl>'
+        f'{_popup_more(props)}'
+    )
+
+
+def _point_tooltip(props):
+    props = props or {}
+    formation = restore_lost_accents(str(props.get('Formation') or 'N/A'))
+    basin = restore_lost_accents(str(props.get('Basin_Sub_') or 'N/A'))
+    return f'{formation} ({basin})'
+
+
 def resolve_marker_climates(climates):
     """Pick climate class(es) that win by prevalence at a coincident location.
 
@@ -1146,6 +1320,22 @@ def drawable_point_features(points_data):
         feature for feature in (points_data or {}).get('features', [])
         if not is_conceptual_point(feature.get('properties') or {})
     ]
+
+
+def real_point_count(points_data):
+    """Data points with a climate class. Conceptual points are not counted.
+
+    This is the source census, before condensation. Nearby citations that
+    collapse into one interpolator anchor still count separately.
+    """
+    total = 0
+    for feature in drawable_point_features(points_data):
+        geometry = feature.get('geometry') or {}
+        if geometry.get('type') != 'Point' or not geometry.get('coordinates'):
+            continue
+        if get_climate_class(feature.get('properties') or {}) in ('D', 'S', 'H'):
+            total += 1
+    return total
 
 
 def extract_points_and_values(points_data):
@@ -2321,7 +2511,13 @@ MAP_THEME_CSS = """
         }
 
         /* Popup body used by data point markers */
-        .pcvs-popup { font-size: 12px; color: var(--pcvs-ink); }
+        .pcvs-popup {
+            font-size: 12px;
+            color: var(--pcvs-ink);
+            min-width: 260px;
+            max-height: 280px;
+            overflow-y: auto;
+        }
         .pcvs-popup-head {
             font-size: 9.5px;
             font-weight: 700;
@@ -2333,12 +2529,20 @@ MAP_THEME_CSS = """
         .pcvs-popup-name { font-weight: 600; margin-bottom: 4px; }
         .pcvs-popup dl {
             display: grid;
-            grid-template-columns: auto 1fr;
+            grid-template-columns: auto minmax(0, 1fr);
             gap: 2px 10px;
             margin: 0;
         }
         .pcvs-popup dt { color: var(--pcvs-muted); }
-        .pcvs-popup dd { margin: 0; }
+        .pcvs-popup dd {
+            margin: 0;
+            min-width: 0;
+            overflow-wrap: break-word;
+        }
+        .pcvs-popup dd.pcvs-na {
+            white-space: nowrap;
+            overflow-wrap: normal;
+        }
         .pcvs-popup-item + .pcvs-popup-item {
             margin-top: 8px;
             padding-top: 8px;
@@ -2353,19 +2557,71 @@ MAP_THEME_CSS = """
             vertical-align: -1px;
             margin-right: 5px;
         }
-        .pcvs-scroll { max-height: 260px; overflow-y: auto; }
+        .pcvs-scroll { max-height: 220px; overflow-y: auto; }
+        .pcvs-more { margin-top: 8px; }
+        .pcvs-more > summary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            margin: 0;
+            padding: 0;
+            border: 1px solid var(--pcvs-line);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.72);
+            color: var(--pcvs-ink);
+            font-size: 14px;
+            font-weight: 650;
+            line-height: 1;
+            cursor: pointer;
+            list-style: none;
+            user-select: none;
+        }
+        .pcvs-more > summary::-webkit-details-marker { display: none; }
+        .pcvs-more > summary::marker { content: ""; }
+        .pcvs-more[open] > summary { font-size: 0; }
+        .pcvs-more[open] > summary::before {
+            content: "−";
+            font-size: 16px;
+            line-height: 1;
+        }
+        .pcvs-more-fields {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .pcvs-more-label {
+            color: var(--pcvs-muted);
+            font-size: 11px;
+            line-height: 1.3;
+        }
+        .pcvs-more-value {
+            margin-top: 1px;
+            line-height: 1.45;
+            overflow-wrap: break-word;
+        }
+        .pcvs-more-value.pcvs-na {
+            white-space: nowrap;
+            overflow-wrap: normal;
+        }
 
         /* Slim scrollbars for the panels that can overflow */
         .pcvs-scroll,
+        .pcvs-popup,
         .basin-filter-list {
             scrollbar-width: thin;
             scrollbar-color: rgba(15, 23, 42, 0.2) transparent;
         }
         .pcvs-scroll::-webkit-scrollbar,
+        .pcvs-popup::-webkit-scrollbar,
         .basin-filter-list::-webkit-scrollbar { width: 9px; }
         .pcvs-scroll::-webkit-scrollbar-track,
+        .pcvs-popup::-webkit-scrollbar-track,
         .basin-filter-list::-webkit-scrollbar-track { background: transparent; }
         .pcvs-scroll::-webkit-scrollbar-thumb,
+        .pcvs-popup::-webkit-scrollbar-thumb,
         .basin-filter-list::-webkit-scrollbar-thumb {
             background: rgba(15, 23, 42, 0.18);
             background-clip: content-box;
@@ -2373,6 +2629,7 @@ MAP_THEME_CSS = """
             border-radius: 999px;
         }
         .pcvs-scroll::-webkit-scrollbar-thumb:hover,
+        .pcvs-popup::-webkit-scrollbar-thumb:hover,
         .basin-filter-list::-webkit-scrollbar-thumb:hover {
             background: rgba(15, 23, 42, 0.32);
             background-clip: content-box;
@@ -2404,6 +2661,16 @@ MAP_THEME_CSS = """
         .color-stats-control td { padding: 1px 0; }
         .color-stats-control td + td,
         .color-stats-control th + th { padding-left: 14px; }
+        .pcvs-point-count {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            margin: 6px 0 0;
+            font-size: 11.5px;
+            font-variant-numeric: tabular-nums;
+        }
+        .pcvs-point-count span { color: var(--pcvs-muted); }
+        .pcvs-point-count strong { font-weight: 650; color: var(--pcvs-ink); }
 
         .climate-point-icon { background: transparent !important; border: none !important; }
 
@@ -2543,9 +2810,8 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
             var map = {{ this._parent.get_name() }};
             var CFG = __CONFIG__;
 
-            function boundsFor(scope) {
-                var b = (scope === 'raster' && CFG.rasterBounds) ? CFG.rasterBounds
-                                                                 : CFG.fullBounds;
+            function boundsFor() {
+                var b = CFG.rasterBounds || CFG.fullBounds;
                 return b ? L.latLngBounds(b) : map.getBounds();
             }
 
@@ -2565,7 +2831,7 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
             /* Page geometry follows the region being exported, so the map fills
                it completely instead of sitting inside white margins. */
             function exportSize(scope) {
-                var b = boundsFor(scope);
+                var b = boundsFor();
                 var lonSpan = Math.abs(b.getEast() - b.getWest());
                 var latSpan = Math.abs(b.getNorth() - b.getSouth());
                 var ratio = (latSpan > 0) ? lonSpan / latSpan : 1.4;
@@ -2578,7 +2844,7 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                     height = Math.round(CFG.maxWidth / ratio);
                     width = CFG.maxWidth;
                 }
-                var padBottom = (scope === 'raster') ? colorStatsPadPx() : 0;
+                var padBottom = colorStatsPadPx();
                 return {width: width, height: height + padBottom, padBottom: padBottom};
             }
 
@@ -2610,7 +2876,7 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
 
             function beginExport(options) {
                 options = options || {};
-                var scope = options.scope === 'raster' ? 'raster' : 'full';
+                var scope = 'raster';
                 var container = map.getContainer();
                 if (options.veil) showVeil();
                 var size = exportSize(scope);
@@ -2633,7 +2899,7 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                 }
                 map.invalidateSize({animate: false, pan: false});
                 var fitOpts = {animate: false, padding: [0, 0]};
-                if (scope === 'raster' && size.padBottom) {
+                if (size.padBottom) {
                     fitOpts = {
                         animate: false,
                         paddingTopLeft: [0, 0],
@@ -2974,11 +3240,19 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                 }).catch(function() { return null; });
             }
 
+            function clipToPage(doc, size) {
+                doc.rect(0, 0, size.width * PX, size.height * PX);
+                if (typeof doc.clip !== 'function') return;
+                doc.clip();
+                if (typeof doc.discardPath === 'function') doc.discardPath();
+            }
+
             function composeVectorPdf(scope, size) {
                 var doc = newPdf(size);
                 var bg = hexRgb(CFG.background);
                 doc.setFillColor(bg[0], bg[1], bg[2]);
                 doc.rect(0, 0, size.width * PX, size.height * PX, 'F');
+                clipToPage(doc, size);
                 var layers = collectLayers();
                 return drawRasters(doc, layers.rasters).then(function() {
                     layers.lines.forEach(function(layer) { drawPolyline(doc, layer); });
@@ -2994,41 +3268,18 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
                 });
             }
 
-            function composeBitmapPdf(scope, size) {
-                var ratio = Math.min(3, Math.max(1.5, 3600 / size.width));
-                return window.htmlToImage.toCanvas(map.getContainer(), {
-                    backgroundColor: CFG.background,
-                    width: size.width,
-                    height: size.height,
-                    pixelRatio: ratio,
-                    cacheBust: false
-                }).then(function(canvas) {
-                    var doc = newPdf(size);
-                    doc.addImage(
-                        canvas.toDataURL('image/jpeg', 0.95), 'JPEG',
-                        0, 0, size.width * PX, size.height * PX, undefined, 'FAST'
-                    );
-                    return {
-                        buffer: doc.output('arraybuffer'),
-                        filename: CFG.basename + '_' + scope + '.pdf'
-                    };
-                });
-            }
-
-            /* Full-map downloads stay vector so points can be edited. The
-               raster-only crop may stay a bitmap, matching the published pair. */
+            /* The download is always the raster extent, drawn as vectors.
+               The climate surface stays an embedded image. */
             function exportPdf(options) {
                 options = options || {};
-                var scope = options.scope === 'raster' ? 'raster' : 'full';
+                var scope = 'raster';
                 var size;
                 showVeil();
                 return libs().then(function() {
                     size = beginExport({scope: scope, veil: true});
                     return settled();
                 }).then(function() {
-                    return scope === 'raster'
-                        ? composeBitmapPdf(scope, size)
-                        : composeVectorPdf(scope, size);
+                    return composeVectorPdf(scope, size);
                 }).then(function(result) {
                     endExport();
                     return result;
@@ -3078,15 +3329,21 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                color_stats_img_path=None, color_stats_name=None,
                method=None, age_label='', map_subtitle='',
                paleozones_data=None, basins_data=None, preserve_points=False):
-    """Create a Folium map with points, coastlines, optional paleozones, and optional raster.
+    """Create a Folium map with points, coastlines, optional basin outlines, and optional raster.
 
     ``age_label`` and ``map_subtitle`` are accepted for caller compatibility;
-    the viewer header is what names the reconstruction. Paleozones are omitted
-    when ``paleozones_data`` is missing or has no features. They are drawn and
-    toggleable, and they do not take hover: the cursor falls through to a
-    basin or a plotted point, and the point wins. Basin outlines are omitted
-    the same way when missing. They start hidden and do not change the map bounds.
+    the viewer header is what names the reconstruction. ``paleozones_data`` is
+    accepted and not drawn. Basin outlines are omitted when missing. They start
+    hidden and do not change the map bounds.
     """
+    if points_data:
+        restore_geojson_accents(points_data)
+    if coastline_data:
+        restore_geojson_accents(coastline_data)
+    if basins_data:
+        restore_geojson_accents(basins_data)
+    # Paleozones are not drawn. Callers may still pass the collection.
+    paleozones_data = None
     
     # Calculate combined bounds
     print("Calculating map bounds...")
@@ -3158,25 +3415,12 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             print(f"Could not add GeoTIFF: {e}")
             print(traceback.format_exc())
     
-    # Add GeoJSON layers. Order is raster (already on the map) → Paleozones →
-    # Coastlines → Basin outlines → Data points. Belts sit on the raster, the
-    # shoreline sits on top of them as the dark shore, and the faint gray basin
-    # limits sit above the shore so a shared edge is still visible. Markers stay on top.
-    # Paleozones do not take the pointer, so a hover with every layer on is
-    # the basin name or the plotted point, and the point wins.
+    # Add GeoJSON layers. Order is raster (already on the map) → Coastlines →
+    # Basin outlines → Data points. The shoreline sits on the raster as the
+    # dark shore, and the faint gray basin limits sit above the shore so a
+    # shared edge is still visible. Markers stay on top, so a click on a
+    # plotted point opens the point popup.
     print("Adding GeoJSON layers...")
-
-    if paleozones_data and paleozones_data.get('features'):
-        print("Adding Paleozones layer...")
-        folium.GeoJson(
-            paleozones_data,
-            name=LAYER_PALEOZONES,
-            show=True,
-            smooth_factor=1.0,
-            style_function=paleozone_style,
-            on_each_feature=_PALEOZONE_PASS_THROUGH,
-            interactive=False,
-        ).add_to(m)
 
     # Add coastline layer
     folium.GeoJson(
@@ -3249,44 +3493,23 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
 
         if len(features) == 1:
             props = features[0].get('properties', {})
-            formation = props.get('Formation') or 'N/A'
-            basin = props.get('Basin_Sub_') or 'N/A'
-            country = props.get('Country') or 'N/A'
-            climate_val = get_climate_class(props) or 'N/A'
-            age = props.get('TIME') or 'N/A'
             popup_html = (
                 '<div class="pcvs-popup">'
                 '<div class="pcvs-popup-head">Data point</div>'
-                f'<div class="pcvs-popup-name">{formation}</div>'
-                '<dl>'
-                f'<dt>Basin</dt><dd>{basin}</dd>'
-                f'<dt>Country</dt><dd>{country}</dd>'
-                f'<dt>Climate</dt><dd>{_climate_name(climate_val)}</dd>'
-                f'<dt>Age</dt><dd>{age} Ma</dd>'
-                '</dl></div>'
+                f'{_point_popup_body(props)}'
+                '</div>'
             )
-            tooltip_text = f'{formation} ({basin})'
+            tooltip_text = _point_tooltip(props)
         else:
             parts = []
             for feat in features:
                 props = feat.get('properties', {})
                 climate = get_climate_class(props) or ''
                 dot_color = color_map.get(climate, '#94a3b8')
-                formation = props.get('Formation') or 'N/A'
-                basin = props.get('Basin_Sub_') or 'N/A'
-                country = props.get('Country') or 'N/A'
-                age = props.get('TIME') or 'N/A'
                 parts.append(
                     '<div class="pcvs-popup-item">'
-                    f'<div class="pcvs-popup-name">'
-                    f'<span class="pcvs-dot" style="background:{dot_color}"></span>'
-                    f'{formation}</div>'
-                    '<dl>'
-                    f'<dt>Basin</dt><dd>{basin}</dd>'
-                    f'<dt>Country</dt><dd>{country}</dd>'
-                    f'<dt>Climate</dt><dd>{_climate_name(climate)}</dd>'
-                    f'<dt>Age</dt><dd>{age} Ma</dd>'
-                    '</dl></div>'
+                    f'{_point_popup_body(props, dot_color=dot_color)}'
+                    '</div>'
                 )
             counts = Counter(c for c in climates if c in _CLIMATE_DISPLAY_ORDER)
             count_bits = [f'{_climate_name(c)} {counts[c]}'
@@ -3299,7 +3522,8 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                 '<div class="pcvs-scroll">' + ''.join(parts) + '</div></div>'
             )
             names = list(OrderedDict.fromkeys(
-                f.get('properties', {}).get('Formation') or 'N/A' for f in features
+                restore_lost_accents(str(f.get('properties', {}).get('Formation') or 'N/A'))
+                for f in features
             ))
             tooltip_text = f'{len(features)} points: {", ".join(names)}'
 
@@ -3310,7 +3534,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             folium.CircleMarker(
                 location=[lat, lon],
                 radius=point_radius_px,
-                popup=folium.Popup(popup_html, max_width=320),
+                popup=folium.Popup(popup_html, max_width=380),
                 tooltip=tooltip_text,
                 color=MARKER_STROKE_COLOR,
                 fillColor=fill_color,
@@ -3328,7 +3552,7 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
             icon_anchor = icon_outer_px / 2.0
             folium.Marker(
                 location=[lat, lon],
-                popup=folium.Popup(popup_html, max_width=320),
+                popup=folium.Popup(popup_html, max_width=380),
                 tooltip=tooltip_text,
                 icon=folium.DivIcon(
                     html=icon_html,
@@ -3365,8 +3589,10 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                 .basin-filter-control {
                     position: relative;
                     width: 216px;
+                    max-width: 216px;
                     overflow: visible;
                     z-index: 900;
+                    box-sizing: border-box;
                 }
                 .basin-filter-control.open { z-index: 1100; }
                 .basin-filter-header {
@@ -3404,20 +3630,27 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                     top: calc(100% + 6px);
                     left: 0;
                     width: 100%;
+                    max-width: 100%;
                     max-height: 56vh;
+                    box-sizing: border-box;
                     flex-direction: column;
-                    padding: 9px 10px 10px;
+                    padding: 10px 12px 12px;
                     background: var(--pcvs-surface);
                     border: 1px solid var(--pcvs-line);
                     border-radius: var(--pcvs-radius);
                     box-shadow: var(--pcvs-shadow);
                     -webkit-backdrop-filter: saturate(160%) blur(10px);
                     backdrop-filter: saturate(160%) blur(10px);
+                    overflow-x: hidden;
                 }
                 .basin-filter-control.open .basin-filter-body { display: flex; }
                 .basin-filter-search {
                     flex: none;
-                    width: 100%;
+                    align-self: stretch;
+                    box-sizing: border-box;
+                    width: auto;
+                    min-width: 0;
+                    max-width: 100%;
                     padding: 5px 8px;
                     margin-bottom: 7px;
                     font: inherit;
@@ -3634,8 +3867,12 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                 '</tr>'
                 for code, label, count, pct in rows
             )
+            point_count = real_point_count(points_data)
             stats_html = (
                 '<div class="pcvs-panel-title">Raster coverage</div>'
+                '<p class="pcvs-point-count">'
+                f'<span>Data points</span><strong>{point_count:,}</strong>'
+                '</p>'
                 '<table>'
                 '<tr><th align="left">Class</th><th align="right">Pixels</th>'
                 '<th align="right">Share</th></tr>'
@@ -3723,10 +3960,9 @@ def _save_map(map_obj, output_file, attempts=8):
             time.sleep(0.45 * (attempt + 1))
     raise last_err
 
-PDF_SCOPES = ('full', 'raster')
+PDF_SCOPES = ('raster',)
 
 PDF_SCOPE_LABELS = {
-    'full': 'entire map',
     'raster': 'raster area',
 }
 
@@ -3784,7 +4020,7 @@ class PdfExporter:
             self._playwright = None
         self.available = False
 
-    def export(self, html_path, pdf_path, scope='full'):
+    def export(self, html_path, pdf_path, scope='raster'):
         """Write one PDF of ``html_path`` framed on ``scope``."""
         if not self.available or not os.path.exists(html_path):
             return False
@@ -4389,12 +4625,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   <div class="header-actions">
     <button type="button" class="btn is-absent" id="comparisonBtn"
             aria-hidden="true" tabindex="-1">Comparison</button>
-    <label class="toggle" id="scopeToggle"
-           title="Export only the area covered by the interpolated raster instead of the whole map">
-      <input type="checkbox" id="rasterOnly">
-      <span>Raster area only</span>
-    </label>
-    <button class="btn btn-primary" id="pdfBtn" title="Export the map as shown (P)">
+    <button class="btn btn-primary" id="pdfBtn" title="Export the raster area as a vector PDF (P)">
       <span class="btn-ico" aria-hidden="true">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
              stroke-linecap="round" stroke-linejoin="round">
@@ -4428,7 +4659,6 @@ var ticks = document.getElementById('ageTicks');
 var prevBtn = document.getElementById('prevBtn');
 var nextBtn = document.getElementById('nextBtn');
 var pdfBtn = document.getElementById('pdfBtn');
-var rasterOnly = document.getElementById('rasterOnly');
 var comparisonBtn = document.getElementById('comparisonBtn');
 var loader = document.getElementById('loader');
 var toast = document.getElementById('toast');
@@ -4515,10 +4745,6 @@ function selectMap(idx, pushHash) {
   try { localStorage.setItem(STORAGE_KEY, String(entry.age)); } catch (e) {}
 }
 
-function currentScope() {
-  return rasterOnly.checked ? 'raster' : 'full';
-}
-
 function downloadBlob(blob, filename) {
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
@@ -4533,9 +4759,9 @@ function downloadBlob(blob, filename) {
 /* Pre-rendered PDFs are the fallback for browsers that cannot reach into the
    frame (for instance when the site is opened straight from disk). They show
    the map with every layer on, which is how it loads. */
-function downloadPrerendered(scope) {
+function downloadPrerendered() {
   var entry = MAPS[current];
-  var href = (entry.pdf || {})[scope] || (entry.pdf || {}).full;
+  var href = (entry.pdf || {}).raster;
   if (!href) {
     showToast('No PDF available for this map.', true);
     return false;
@@ -4549,8 +4775,8 @@ function downloadPrerendered(scope) {
   return true;
 }
 
-/* The frame renders itself. A full-map download is drawn as vectors so the
-   data points stay editable; the raster-only crop may stay a bitmap. */
+/* The frame draws a vector PDF of the raster extent. Points, shores and
+   basin outlines stay paths; the climate surface stays an image. */
 function exportLive(scope) {
   var target = frame.contentWindow;
   if (!target) return Promise.reject(new Error('Map frame is not ready'));
@@ -4583,14 +4809,13 @@ function exportLive(scope) {
 
 function exportPdf() {
   if (pdfBtn.disabled || pdfBtn.classList.contains('busy')) return;
-  var scope = currentScope();
   pdfBtn.classList.add('busy');
-  showToast('Rendering the ' + (scope === 'raster' ? 'raster area' : 'entire map') + '…');
+  showToast('Rendering the raster area…');
 
-  exportLive(scope).then(function() {
+  exportLive('raster').then(function() {
     showToast('PDF exported.');
   }).catch(function(err) {
-    if (downloadPrerendered(scope)) {
+    if (downloadPrerendered()) {
       showToast('Live export unavailable (' + err.message +
                 '); downloaded the pre-rendered PDF instead.', true);
     }
@@ -4800,7 +5025,6 @@ def main():
         with StepTimer("Load GeoJSON") as t:
             points_data = load_geojson(points_path)
             coastline_data = load_geojson(coast_path)
-            paleozones_data = load_geojson(paleozones_path) if paleozones_path else None
             basins_data = load_geojson(basins_path) if basins_path else None
         _record_step(t)
 
@@ -4808,11 +5032,8 @@ def main():
         n_coast = len(coastline_data.get('features', []))
         print(f"Loaded {n_pts} points from {points_path}")
         print(f"Loaded {n_coast} coastline features from {coast_path}")
-        if paleozones_data is not None:
-            n_paleo = len(paleozones_data.get('features', []))
-            print(f"Loaded {n_paleo} paleozone features from {paleozones_path}")
-            if n_paleo == 0:
-                paleozones_data = None
+        if paleozones_path:
+            print(f"Paleozones file ignored (layer is not drawn): {paleozones_path}")
         else:
             print(f"No Paleozones file for {base}")
         if basins_data is not None:
@@ -4847,10 +5068,6 @@ def main():
                 interpolator_data, base
             )
             coastline_data = apply_paleo_reference_frame_correction(coastline_data, base)
-            if paleozones_data is not None:
-                paleozones_data = apply_paleo_reference_frame_correction(
-                    paleozones_data, base
-                )
             if basins_data is not None:
                 basins_data = apply_paleo_reference_frame_correction(
                     basins_data, base
@@ -4879,7 +5096,6 @@ def main():
                     gradient_sharp=gradient_sharp,
                     age_label=age_label,
                     map_subtitle='Original raster',
-                    paleozones_data=paleozones_data,
                     basins_data=basins_data,
                 )
             _record_step(t)
@@ -4927,7 +5143,6 @@ def main():
                 method=method,
                 age_label=age_label,
                 map_subtitle='KNN + IDW interpolation',
-                paleozones_data=paleozones_data,
                 basins_data=basins_data,
             )
         _record_step(t)
