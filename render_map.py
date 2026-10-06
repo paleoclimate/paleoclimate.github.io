@@ -97,7 +97,7 @@ PALEOZONE_WEIGHT_PX = 1.0
 BASIN_OUTLINE_COLOR = '#94a3b8'
 BASIN_OUTLINE_WEIGHT_PX = 1.35
 BASIN_OUTLINE_OPACITY = 0.40
-BASIN_OUTLINE_SHOW = False
+BASIN_OUTLINE_SHOW = True
 
 # Climate classification palette, shared by markers and the raster ramp.
 # Muted cartographic tones: saturated primaries read as a toy map, and the
@@ -1150,8 +1150,8 @@ def _climate_name(code):
     return f'{label} ({code})' if label else code
 
 
-def _popup_text(value):
-    """Escape one popup cell and restore accents the export stored as '?'."""
+def _popup_plain(value):
+    """Display text for one popup cell, before HTML escaping."""
     if value is None:
         text = 'N/A'
     else:
@@ -1161,15 +1161,23 @@ def _popup_text(value):
     text = restore_lost_accents(text)
     if text in {'?', '?N/A'}:
         text = 'N/A'
-    escaped = html.escape(text, quote=True)
+    return text
+
+
+def _popup_text(value):
+    """Escape one popup cell and restore accents the export stored as '?'."""
+    escaped = html.escape(_popup_plain(value), quote=True)
     return escaped.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
 
 
 def _popup_dl(pairs):
-    return ''.join(
-        f'<dt>{html.escape(label)}</dt><dd>{_popup_text(value)}</dd>'
-        for label, value in pairs
-    )
+    rows = []
+    for label, value in pairs:
+        klass = ' class="pcvs-na"' if _popup_plain(value) == 'N/A' else ''
+        rows.append(
+            f'<dt>{html.escape(label)}</dt><dd{klass}>{_popup_text(value)}</dd>'
+        )
+    return ''.join(rows)
 
 
 def _point_fact_rows(props):
@@ -2492,7 +2500,12 @@ MAP_THEME_CSS = """
         }
 
         /* Popup body used by data point markers */
-        .pcvs-popup { font-size: 12px; color: var(--pcvs-ink); }
+        .pcvs-popup {
+            font-size: 12px;
+            color: var(--pcvs-ink);
+            max-height: 280px;
+            overflow-y: auto;
+        }
         .pcvs-popup-head {
             font-size: 9.5px;
             font-weight: 700;
@@ -2504,12 +2517,20 @@ MAP_THEME_CSS = """
         .pcvs-popup-name { font-weight: 600; margin-bottom: 4px; }
         .pcvs-popup dl {
             display: grid;
-            grid-template-columns: auto 1fr;
+            grid-template-columns: minmax(0, max-content) minmax(2.75em, 1fr);
             gap: 2px 10px;
             margin: 0;
         }
         .pcvs-popup dt { color: var(--pcvs-muted); }
-        .pcvs-popup dd { margin: 0; }
+        .pcvs-popup dd {
+            margin: 0;
+            min-width: 0;
+            overflow-wrap: break-word;
+        }
+        .pcvs-popup dd.pcvs-na {
+            white-space: nowrap;
+            overflow-wrap: normal;
+        }
         .pcvs-popup-item + .pcvs-popup-item {
             margin-top: 8px;
             padding-top: 8px;
@@ -2524,8 +2545,7 @@ MAP_THEME_CSS = """
             vertical-align: -1px;
             margin-right: 5px;
         }
-        .pcvs-scroll { max-height: 260px; overflow-y: auto; }
-        .pcvs-popup dd { overflow-wrap: anywhere; }
+        .pcvs-scroll { max-height: 220px; overflow-y: auto; }
         .pcvs-more { margin-top: 8px; }
         .pcvs-more > summary {
             display: inline-flex;
@@ -2558,15 +2578,19 @@ MAP_THEME_CSS = """
 
         /* Slim scrollbars for the panels that can overflow */
         .pcvs-scroll,
+        .pcvs-popup,
         .basin-filter-list {
             scrollbar-width: thin;
             scrollbar-color: rgba(15, 23, 42, 0.2) transparent;
         }
         .pcvs-scroll::-webkit-scrollbar,
+        .pcvs-popup::-webkit-scrollbar,
         .basin-filter-list::-webkit-scrollbar { width: 9px; }
         .pcvs-scroll::-webkit-scrollbar-track,
+        .pcvs-popup::-webkit-scrollbar-track,
         .basin-filter-list::-webkit-scrollbar-track { background: transparent; }
         .pcvs-scroll::-webkit-scrollbar-thumb,
+        .pcvs-popup::-webkit-scrollbar-thumb,
         .basin-filter-list::-webkit-scrollbar-thumb {
             background: rgba(15, 23, 42, 0.18);
             background-clip: content-box;
@@ -2574,6 +2598,7 @@ MAP_THEME_CSS = """
             border-radius: 999px;
         }
         .pcvs-scroll::-webkit-scrollbar-thumb:hover,
+        .pcvs-popup::-webkit-scrollbar-thumb:hover,
         .basin-filter-list::-webkit-scrollbar-thumb:hover {
             background: rgba(15, 23, 42, 0.32);
             background-clip: content-box;
@@ -3533,8 +3558,10 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                 .basin-filter-control {
                     position: relative;
                     width: 216px;
+                    max-width: 216px;
                     overflow: visible;
                     z-index: 900;
+                    box-sizing: border-box;
                 }
                 .basin-filter-control.open { z-index: 1100; }
                 .basin-filter-header {
@@ -3572,7 +3599,9 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                     top: calc(100% + 6px);
                     left: 0;
                     width: 100%;
+                    max-width: 100%;
                     max-height: 56vh;
+                    box-sizing: border-box;
                     flex-direction: column;
                     padding: 9px 10px 10px;
                     background: var(--pcvs-surface);
@@ -3581,11 +3610,15 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
                     box-shadow: var(--pcvs-shadow);
                     -webkit-backdrop-filter: saturate(160%) blur(10px);
                     backdrop-filter: saturate(160%) blur(10px);
+                    overflow-x: hidden;
                 }
                 .basin-filter-control.open .basin-filter-body { display: flex; }
                 .basin-filter-search {
                     flex: none;
+                    box-sizing: border-box;
                     width: 100%;
+                    max-width: 100%;
+                    min-width: 0;
                     padding: 5px 8px;
                     margin-bottom: 7px;
                     font: inherit;

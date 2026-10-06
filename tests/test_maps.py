@@ -54,6 +54,8 @@ def test_map_controls_and_layers(page, base_url, age):
     for name in LAYER_NAMES:
         assert any(name in label for label in labels), f'{name} missing from {labels}'
         assert overlay_checked(frame, name) is True
+    if any('Basins' in label for label in labels):
+        assert overlay_checked(frame, 'Basins') is True, labels
 
     import render_map as renderer
     assert not any(renderer.LAYER_PALEOZONES in label for label in labels), labels
@@ -301,6 +303,17 @@ def test_basin_filter_search_clear_and_restore(page, base_url, age):
     checkboxes = frame.locator('.basin-filter-list input[type="checkbox"]')
     assert checkboxes.count() >= 1
     assert frame.locator('.basin-filter-search').get_attribute('placeholder')
+    contained = frame.evaluate(
+        """() => {
+          const input = document.querySelector('.basin-filter-search');
+          const card = document.querySelector('.basin-filter-body');
+          const field = input.getBoundingClientRect();
+          const panel = card.getBoundingClientRect();
+          return field.left >= panel.left - 1 && field.right <= panel.right + 1
+              && field.width > 40;
+        }"""
+    )
+    assert contained, 'Basin search spills out of the filter card'
 
     badge = frame.locator('.basin-filter-count').inner_text().strip()
     assert re_match_count(badge)
@@ -372,6 +385,16 @@ def test_data_point_popup_describes_a_formation(page, base_url, age):
     assert 'Paleoenvironment' in opened
     assert 'Dating Evidence' in opened
     assert 'Lithology' in opened
+    max_height = frame.locator('.pcvs-popup').first.evaluate(
+        "el => getComputedStyle(el).maxHeight"
+    )
+    assert max_height == '280px'
+    box = frame.locator('.leaflet-popup-content').first.bounding_box()
+    assert box and box['height'] <= 320
+    na = frame.locator('.pcvs-na')
+    if na.count():
+        lines = na.first.evaluate('el => el.getClientRects().length')
+        assert lines == 1, 'N/A wrapped onto more than one line'
 
 
 @pytest.mark.parametrize('age', representative_ages())
