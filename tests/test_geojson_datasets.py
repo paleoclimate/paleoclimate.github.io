@@ -113,7 +113,7 @@ def test_point_popup_shows_the_reference_and_tucks_the_notes(tmp_path):
                     'Climate_Cl': 'H',
                     'TIME': 100,
                     'REF(Authors, Year)': 'Gon?lves et al. 2001',
-                    'Paleoenvironment': 'coastal',
+                    'Paleoenvironment': '',
                     'Dating evidence': '109 ?18 Ma',
                     'Lithology, structures, paleowind': 'sandstone',
                 },
@@ -159,6 +159,9 @@ def test_point_popup_shows_the_reference_and_tucks_the_notes(tmp_path):
     assert 'Gonçalves' in html_text
     assert 'class="pcvs-more"' in html_text
     assert 'Paleoenvironment' in html_text
+    assert 'class="pcvs-na"' in html_text
+    assert 'max-height: 280px' in html_text
+    assert 'min-width: 0' in html_text
     assert 'Dating Evidence' in html_text
     assert '>Lithology</dt>' in html_text
     assert '109 ± 18 Ma' in html_text
@@ -222,7 +225,7 @@ def test_coastline_is_the_dark_shore():
 
 def test_basin_outlines_are_a_stroke_and_keep_only_the_name():
     assert renderer.LAYER_BASINS == 'Basins'
-    assert renderer.BASIN_OUTLINE_SHOW is False
+    assert renderer.BASIN_OUTLINE_SHOW is True
     assert 145 in renderer.VIEWER_HIDDEN_AGES
     styled = renderer.basin_outline_style({})
     assert styled['fill'] is True

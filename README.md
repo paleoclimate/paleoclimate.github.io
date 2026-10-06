@@ -81,7 +81,7 @@ runs live PDF export. Extra pytest flags go after `--`, for example
   as a point dataset, and it does not seed or mask the raster.
 
 - **Basins**: Optional sedimentary-basin outlines for that reconstruction age.
-  Stroke only, off until the layer is checked. A click on the outline or inside
+  Stroke only, on when the map opens. A click on the outline or inside
   the basin shows its name; a click on a data point still shows the point.
   Not every age has them.
   
