@@ -44,11 +44,10 @@ def test_maps_catalog_is_well_formed():
         assert entry['path'].endswith('.html')
         assert (REPO_ROOT / entry['path']).is_file(), f"Missing map {entry['path']}"
         assert isinstance(entry['pdf'], dict)
-        for scope in ('full', 'raster'):
-            href = entry['pdf'].get(scope)
-            if href:
-                assert (REPO_ROOT / href).is_file(), f'Missing PDF {href}'
-                assert href.endswith(f'_{scope}.pdf')
+        assert set(entry['pdf']) == {'raster'}, entry['pdf']
+        href = entry['pdf']['raster']
+        assert (REPO_ROOT / href).is_file(), f'Missing PDF {href}'
+        assert href.endswith('_raster.pdf')
 
 
 def _html_age(path):
@@ -200,39 +199,20 @@ def test_basin_outlines_layer_is_optional_and_matches_source():
     )
 
 
-def test_paleozones_layer_is_optional_and_matches_source():
-    """Paleozones is a Folium overlay only when `{base}_paleozones.geojson` exists.
-
-    Stale generated HTML (from before this layer existed) will fail this check
-    until `render_map.py` is run again. That is expected; do not weaken the
-    assertion to match old maps.
-    """
+def test_paleozones_are_not_drawn():
+    """Paleozone files stay companions, and the layer is not on the map."""
     import render_map as renderer
 
     assert renderer.LAYER_PALEOZONES == 'Paleozones'
     assert renderer.LAYER_PALEOZONES not in LAYER_NAMES
 
-    geojson = REPO_ROOT / 'GEOJSON'
-    if not geojson.is_dir():
-        pytest.skip('GEOJSON/ is local and gitignored')
-
     html_files = idw_html_files()
     assert html_files, 'No generated maps to inspect'
-    mismatches = []
-    for path in html_files:
-        match = re.search(r'map_(\d+_ma)_', path.name)
-        assert match, path.name
-        base = match.group(1)
-        has_file = (geojson / f'{base}{renderer.GEOJSON_PALEOZONES_SUFFIX}').is_file()
-        text = path.read_text(encoding='utf-8')
-        has_layer = f'"{renderer.LAYER_PALEOZONES}"' in text
-        if has_file != has_layer:
-            mismatches.append(
-                f'{path.name}: paleozones file={has_file} layer={has_layer}'
-            )
-    assert not mismatches, 'Paleozones layer does not match source files:\n' + '\n'.join(
-        mismatches
-    )
+    present = [
+        path.name for path in html_files
+        if f'"{renderer.LAYER_PALEOZONES}"' in path.read_text(encoding='utf-8')
+    ]
+    assert not present, 'Paleozones layer is still drawn:\n' + '\n'.join(present)
 
 
 def test_idw_maps_also_embed_export_api():
@@ -252,7 +232,6 @@ def test_viewer_shell_has_expected_controls():
         'id="prevBtn"',
         'id="nextBtn"',
         'id="pdfBtn"',
-        'id="rasterOnly"',
         'id="comparisonBtn"',
         'id="mapFrame"',
         'id="loader"',
@@ -342,10 +321,36 @@ def test_restore_lost_accents_repairs_basin_names():
         ('Neuqu?n', 'Neuquén'),
         ('Ca?ad?n Asfalto', 'Cañadón Asfalto'),
         ('Aur?s', 'Aurès'),
-        ('Santos', 'Santos'),
-        ('Potiguar', 'Potiguar'),
+        ('S? Mateus', 'São Mateus'),
+        ('Alc?tara', 'Alcântara'),
+        ('Alter do Ch?', 'Alter do Chão'),
+        ('Tr? Barras', 'Três Barras'),
+        ('Algod?s', 'Algodões'),
+        ('Gon?lves', 'Gonçalves'),
+        ('C?doba', 'Córdoba'),
+        ('A? El Guettar', 'Aïn El Guettar'),
+        ('A?', 'Açu'),
+        ('Embor?S? Jos?N/A', 'Emboré/São José'),
+        ('109 ?18 Ma', '109 ± 18 Ma'),
+        ('SAG(?) Sequence', 'SAG(?) Sequence'),
+        ('Vivian Formation?', 'Vivian Formation?'),
     ):
         assert renderer.restore_lost_accents(broken) == fixed
+
+
+def test_generated_popups_name_the_reference_and_repaired_places():
+    files = idw_html_files()
+    assert files, 'No generated maps to inspect'
+    forbidden = ('Alc?tara', 'S? Mateus', 'Alter do Ch?', 'Tr? Barras', 'Gon?lves')
+    broken = []
+    for path in files:
+        text = path.read_text(encoding='utf-8')
+        if '<dt>Reference</dt>' not in text or 'pcvs-more' not in text or 'Data points' not in text:
+            broken.append(f'{path.name}: popup or color stats was not regenerated')
+        for fragment in forbidden:
+            if fragment in text:
+                broken.append(f'{path.name} still has {fragment}')
+    assert not broken, '\n'.join(broken)
 
 
 def test_generated_maps_keep_basin_accents():
@@ -392,24 +397,25 @@ def test_every_html_and_pdf_map_was_generated():
     assert not missing, 'Maps were not generated successfully:\n' + '\n'.join(missing)
 
 
-def test_export_api_keeps_full_map_points_as_vectors():
+def test_export_api_draws_the_raster_extent_as_vectors():
     source = (REPO_ROOT / 'render_map.py').read_text(encoding='utf-8')
     assert 'composeVectorPdf' in source
     assert 'doc.circle' in source
-    assert 'composeBitmapPdf' in source
-    assert "scope === 'raster'" in source
+    assert 'composeBitmapPdf' not in source
+    assert 'htmlToImage.toCanvas' not in source
+    assert "var scope = 'raster'" in source
     assert 'pcvs-exporting path.pcvs-point' in source
     assert 'filter: none !important' in source
-    assert 'htmlToImage.toCanvas(map.getContainer()' in source
     assert 'composeVectorPdf(scope, size)' in source
+    assert 'doc.clip' in source
 
 
-def test_full_pdfs_keep_data_points_as_vectors():
+def test_raster_pdfs_keep_data_points_as_vectors():
     files = idw_html_files()
     assert files, 'No generated maps; run python render_map.py --pdf'
     broken = []
     for html in files:
-        pdf = pdf_files_for(html)['full']
+        pdf = pdf_files_for(html)['raster']
         try:
             assert_pdf_points_are_vector(pdf)
         except AssertionError as exc:

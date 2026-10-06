@@ -190,7 +190,7 @@ def pdf_path_for(html_path: Path, scope: str) -> Path:
 
 
 def pdf_files_for(html_path: Path) -> dict[str, Path]:
-    return {scope: pdf_path_for(html_path, scope) for scope in ('full', 'raster')}
+    return {'raster': pdf_path_for(html_path, 'raster')}
 
 
 def is_valid_pdf(path: Path, min_bytes: int = 1000) -> bool:

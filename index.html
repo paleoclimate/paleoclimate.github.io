@@ -394,12 +394,7 @@
   <div class="header-actions">
     <button type="button" class="btn is-absent" id="comparisonBtn"
             aria-hidden="true" tabindex="-1">Comparison</button>
-    <label class="toggle" id="scopeToggle"
-           title="Export only the area covered by the interpolated raster instead of the whole map">
-      <input type="checkbox" id="rasterOnly">
-      <span>Raster area only</span>
-    </label>
-    <button class="btn btn-primary" id="pdfBtn" title="Export the map as shown (P)">
+    <button class="btn btn-primary" id="pdfBtn" title="Export the raster area as a vector PDF (P)">
       <span class="btn-ico" aria-hidden="true">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
              stroke-linecap="round" stroke-linejoin="round">
@@ -418,7 +413,7 @@
 </main>
 
 <script>
-var MAPS = [{"path": "GENERATED_IDW_MAPS/map_65_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 65, "label": "65 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_65_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_65_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_70_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 70, "label": "70 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_70_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_70_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_75_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 75, "label": "75 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_75_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_75_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_80_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 80, "label": "80 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_80_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_80_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_85_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 85, "label": "85 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_85_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_85_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_90_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 90, "label": "90 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_90_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_90_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_95_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 95, "label": "95 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_95_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_95_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_100_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 100, "label": "100 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_100_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_100_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_105_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 105, "label": "105 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_105_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_105_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": "COMPARISON/comparison_report_105.html"}, {"path": "GENERATED_IDW_MAPS/map_110_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 110, "label": "110 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_110_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_110_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_115_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 115, "label": "115 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_115_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_115_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": "COMPARISON/comparison_report_115.html"}, {"path": "GENERATED_IDW_MAPS/map_120_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 120, "label": "120 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_120_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_120_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_125_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 125, "label": "125 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_125_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_125_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_130_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 130, "label": "130 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_130_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_130_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_135_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 135, "label": "135 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_135_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_135_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_140_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 140, "label": "140 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"full": "GENERATED_IDW_MAPS/map_140_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_full.pdf", "raster": "GENERATED_IDW_MAPS/map_140_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}];
+var MAPS = [{"path": "GENERATED_IDW_MAPS/map_65_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 65, "label": "65 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_65_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_70_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 70, "label": "70 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_70_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_75_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 75, "label": "75 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_75_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_80_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 80, "label": "80 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_80_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_85_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 85, "label": "85 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_85_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_90_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 90, "label": "90 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_90_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_95_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 95, "label": "95 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_95_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_100_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 100, "label": "100 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_100_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_105_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 105, "label": "105 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_105_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": "COMPARISON/comparison_report_105.html"}, {"path": "GENERATED_IDW_MAPS/map_110_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 110, "label": "110 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_110_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_115_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 115, "label": "115 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_115_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": "COMPARISON/comparison_report_115.html"}, {"path": "GENERATED_IDW_MAPS/map_120_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 120, "label": "120 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_120_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_125_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 125, "label": "125 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_125_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_130_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 130, "label": "130 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_130_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_135_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 135, "label": "135 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_135_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}, {"path": "GENERATED_IDW_MAPS/map_140_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.html", "age": 140, "label": "140 Ma", "method": "kdtree", "caption": "KNN + IDW interpolation · k-d Tree", "pdf": {"raster": "GENERATED_IDW_MAPS/map_140_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree_raster.pdf"}, "comparison": ""}];
 var STORAGE_KEY = 'pcvs:age';
 
 var frame = document.getElementById('mapFrame');
@@ -433,7 +428,6 @@ var ticks = document.getElementById('ageTicks');
 var prevBtn = document.getElementById('prevBtn');
 var nextBtn = document.getElementById('nextBtn');
 var pdfBtn = document.getElementById('pdfBtn');
-var rasterOnly = document.getElementById('rasterOnly');
 var comparisonBtn = document.getElementById('comparisonBtn');
 var loader = document.getElementById('loader');
 var toast = document.getElementById('toast');
@@ -520,10 +514,6 @@ function selectMap(idx, pushHash) {
   try { localStorage.setItem(STORAGE_KEY, String(entry.age)); } catch (e) {}
 }
 
-function currentScope() {
-  return rasterOnly.checked ? 'raster' : 'full';
-}
-
 function downloadBlob(blob, filename) {
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
@@ -538,9 +528,9 @@ function downloadBlob(blob, filename) {
 /* Pre-rendered PDFs are the fallback for browsers that cannot reach into the
    frame (for instance when the site is opened straight from disk). They show
    the map with every layer on, which is how it loads. */
-function downloadPrerendered(scope) {
+function downloadPrerendered() {
   var entry = MAPS[current];
-  var href = (entry.pdf || {})[scope] || (entry.pdf || {}).full;
+  var href = (entry.pdf || {}).raster;
   if (!href) {
     showToast('No PDF available for this map.', true);
     return false;
@@ -554,8 +544,8 @@ function downloadPrerendered(scope) {
   return true;
 }
 
-/* The frame renders itself. A full-map download is drawn as vectors so the
-   data points stay editable; the raster-only crop may stay a bitmap. */
+/* The frame draws a vector PDF of the raster extent. Points, shores and
+   basin outlines stay paths; the climate surface stays an image. */
 function exportLive(scope) {
   var target = frame.contentWindow;
   if (!target) return Promise.reject(new Error('Map frame is not ready'));
@@ -588,14 +578,13 @@ function exportLive(scope) {
 
 function exportPdf() {
   if (pdfBtn.disabled || pdfBtn.classList.contains('busy')) return;
-  var scope = currentScope();
   pdfBtn.classList.add('busy');
-  showToast('Rendering the ' + (scope === 'raster' ? 'raster area' : 'entire map') + '…');
+  showToast('Rendering the raster area…');
 
-  exportLive(scope).then(function() {
+  exportLive('raster').then(function() {
     showToast('PDF exported.');
   }).catch(function(err) {
-    if (downloadPrerendered(scope)) {
+    if (downloadPrerendered()) {
       showToast('Live export unavailable (' + err.message +
                 '); downloaded the pre-rendered PDF instead.', true);
     }

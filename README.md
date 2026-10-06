@@ -1,7 +1,7 @@
 # Paleogeographic Map Renderer - 110 Million Years Ago
 
 This project renders paleogeographic maps using Folium, displaying GeoJSON data
-points, reconstructed coastlines, optional paleozone polygons, and GeoTIFF raster data.
+points, reconstructed coastlines, optional basin outlines, and GeoTIFF raster data.
 
 ## Features
 
@@ -10,8 +10,9 @@ points, reconstructed coastlines, optional paleozone polygons, and GeoTIFF raste
 - **GeoTIFF Raster**: Displays the indicator-IDW climate-class surface
 - **Interactive Map**: Full-featured Folium map with layer controls, basin filter, legend,
   fullscreen, and measurement tools
-- **PDF Export**: Downloads the map exactly as it is on screen, framed either on the whole
-  map or on the interpolated raster area
+- **PDF Export**: Downloads the interpolated raster area as a vector PDF. Coastlines,
+  basin outlines, data points and graticule labels stay editable paths. The climate
+  surface stays the embedded image.
 
 ## Installation
 
@@ -76,8 +77,8 @@ runs live PDF export. Extra pytest flags go after `--`, for example
   - Yellow: Dry (D)
   - Green: Semi-arid (S)
   
-- **Paleozones**: Optional climate-belt polygons (Humid / Semi-arid / Dry). Not every
-  reconstruction age has them; when the file is missing the layer is omitted.
+- **Paleozones**: Not drawn. A `{age}_ma_paleozones.geojson` file is still ignored
+  as a point dataset, and it does not seed or mask the raster.
 
 - **Basins**: Optional sedimentary-basin outlines for that reconstruction age.
   Stroke only, off until the layer is checked. A click on the outline or inside
@@ -88,7 +89,8 @@ runs live PDF export. Extra pytest flags go after `--`, for example
 
 - **Raster**: Indicator-IDW class surface with rounded zone borders. Dry, semi-arid, and humid are solid colors. Semi-arid is the class that won the cell, not the average of dry and humid.
 
-- **Color stats**: Share of the raster area falling in each climate class
+- **Color stats**: Share of the raster area falling in each climate class, and the
+  number of data points behind the map (conceptual points are not counted)
 
 ## Files
 
@@ -110,7 +112,7 @@ For every dataset in `GEOJSON/`, the script generates:
   and `{age}_overruled.geojson` (data points whose class lost the vote)
 - `GENERATED_GEOTIFFS/`: one indicator-IDW GeoTIFF per age
 - `GENERATED_IDW_MAPS/`: one interactive `map_<age>_*.html` per age, plus its
-  raster overlay PNG and, with `--pdf`, the full and raster-area PDFs
+  raster overlay PNG and, with `--pdf`, the raster-area vector PDF
 - `index.html`: the viewer that switches between those IDW maps
 
 Data points are condensed at 0.5° in source coordinates before the paleo-frame
@@ -120,24 +122,21 @@ the map stay on the original citations.
 
 ## PDF export
 
-The map can be exported at two scopes:
+The download is the region covered by the interpolated raster, sized so the map
+fills the page edge to edge. It is a vector PDF: coastlines, basin outlines, data
+points and graticule labels are paths and text. The climate surface stays the
+embedded raster image.
 
-- **entire map**: the full extent of the data, coastlines included
-- **raster area**: only the region covered by the interpolated (coloured) raster
+In the viewer, **PDF** exports that raster area from the map as it currently
+stands, so whatever is checked under **Layers** (Raster, Coastlines, Basins when
+present, Data points, Color stats) and whichever basins are filtered in is what
+the PDF shows. Interactive controls (zoom, layer switcher, basin filter, measure)
+are left out.
 
-Both are framed so the map fills the page edge to edge; the page itself is sized to the
-aspect ratio of the exported region, so there are no white margins to trim.
-
-In the viewer, tick **Raster area only** next to the **PDF** button to choose the scope. The
-export is rendered in the browser from the map as it currently stands, so whatever is checked
-under **Layers** (Raster, Paleozones when present, Coastlines, Basins when present, Data points, Color stats) and whichever basins are
-filtered in is exactly what the PDF shows. Interactive controls (zoom, layer switcher, basin
-filter, measure) are left out.
-
-Running with `--pdf` pre-renders both scopes next to each map HTML
-(`map_<age>_*_full.pdf` and `map_<age>_*_raster.pdf`). Those are vector PDFs, and they are
-what the viewer falls back to when it cannot render in the browser, for instance when
-`index.html` is opened straight from disk instead of being served over HTTP.
+Running with `--pdf` pre-renders that page next to each map HTML
+(`map_<age>_*_raster.pdf`). That file is what the viewer falls back to when it
+cannot render in the browser, for instance when `index.html` is opened straight
+from disk instead of being served over HTTP.
 
 ## Comparison with Floegel reference maps
 

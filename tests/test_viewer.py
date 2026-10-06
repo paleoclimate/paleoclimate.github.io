@@ -35,7 +35,7 @@ def test_viewer_chrome_and_first_load(page, base_url, maps):
     assert page.locator('#nextBtn').is_visible()
     assert page.locator('#pdfBtn').is_visible()
     assert page.locator('#pdfBtn').is_enabled()
-    assert page.locator('#rasterOnly').is_visible()
+    assert page.locator('#rasterOnly').count() == 0
     assert page.locator('#mapFrame').is_visible()
     assert not page.locator('#loader').evaluate("el => el.classList.contains('on')")
 
@@ -141,7 +141,14 @@ def test_keyboard_arrows_and_hash_stay_in_sync(page, base_url, maps):
 
 def test_keyboard_ignored_while_focus_is_on_an_input(page, base_url, maps):
     goto_viewer(page, base_url, age=int(maps[1]['age']))
-    page.locator('#rasterOnly').focus()
+    page.evaluate(
+        """() => {
+          const input = document.createElement('input');
+          input.id = 'guardProbe';
+          document.body.appendChild(input);
+        }"""
+    )
+    page.locator('#guardProbe').focus()
     page.keyboard.press('ArrowRight')
     page.wait_for_timeout(200)
     assert current_viewer_age(page) == int(maps[1]['age'])
@@ -233,20 +240,11 @@ def test_loader_appears_while_switching_maps(page, base_url, maps):
 
 def test_pdf_button_shows_progress_toast(page, base_url):
     goto_viewer(page, base_url)
-    assert not page.locator('#rasterOnly').is_checked()
     page.locator('#pdfBtn').click()
     toast = page.locator('#toast')
     toast.wait_for(state='visible')
-    text = toast.inner_text()
-    assert 'Rendering' in text or 'PDF' in text or 'exported' in text.lower()
-
-
-def test_raster_only_toggle_changes_export_scope_copy(page, base_url):
-    goto_viewer(page, base_url)
-    page.locator('#rasterOnly').check()
-    page.locator('#pdfBtn').click()
-    page.locator('#toast').wait_for(state='visible')
-    assert 'raster' in page.locator('#toast').inner_text().lower()
+    text = toast.inner_text().lower()
+    assert 'raster' in text
 
 
 def test_p_shortcut_triggers_export_but_modifiers_do_not(page, base_url):
