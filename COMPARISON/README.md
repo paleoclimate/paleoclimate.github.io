@@ -83,6 +83,15 @@ Com os JSON na pasta `COMPARISON/`:
 python compare_floegel.py compare
 ```
 
+Hay uses the same comparison once `COMPARISON/inputs/{age}_hay.png` exists.
+Those images are not in this repository, so Hay is not scored. The Floegel
+reports on disk were picked against an older GeoTIFF name and are not
+recomputed here.
+
+```bash
+python compare_floegel.py compare --atlas hay
+```
+
 Isso gera, para cada idade:
 
 | Arquivo | Conteúdo |

@@ -10,9 +10,13 @@ points, reconstructed coastlines, optional basin outlines, and GeoTIFF raster da
 - **GeoTIFF Raster**: Displays the indicator-IDW climate-class surface
 - **Interactive Map**: Full-featured Folium map with layer controls, basin filter, legend,
   fullscreen, and measurement tools
-- **PDF Export**: Downloads the interpolated raster area as a vector PDF. Coastlines,
-  basin outlines, data points and graticule labels stay editable paths. The climate
-  surface stays the embedded image.
+- **PDF Export**: One vector PDF of the raster extent. Coastlines, basin outlines,
+  data points and graticule labels stay editable paths. The climate surface stays
+  the embedded image.
+- **Access**: The viewer asks for the team password before it loads a map. The point
+  files stay in local `GEOJSON/` and are not part of the site.
+- **Add a point**: `add-point.html` downloads one GeoJSON feature in the October
+  column pattern, without `Weight`.
 
 ## Installation
 
