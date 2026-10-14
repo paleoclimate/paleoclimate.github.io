@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PCVS · Add a point</title>
+<script src="viewer_gate.js"></script>
+<style>
+  :root { --ink: #0f172a; --muted: #64748b; --line: rgba(148, 163, 184, .4); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    color: var(--ink);
+    background: #eef0f2;
+  }
+  main { max-width: 820px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  .lead { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+  form { display: grid; gap: 10px; }
+  label { display: grid; gap: 4px; font-size: 12px; font-weight: 650; }
+  input, textarea, select {
+    font: inherit;
+    font-weight: 450;
+    padding: 7px 8px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+  }
+  textarea { min-height: 64px; resize: vertical; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button {
+    justify-self: start;
+    padding: 8px 14px;
+    border: 0;
+    border-radius: 8px;
+    background: #2f6fed;
+    color: #fff;
+    font: inherit;
+    cursor: pointer;
+  }
+  a { color: #2f6fed; }
+</style>
+</head>
+<body>
+<main>
+  <p><a href="index.html">Back to the atlas</a></p>
+  <h1>Add a point</h1>
+  <p class="lead">Same columns as the October point table, without Weight. The download is a GeoJSON feature for the local GEOJSON folder. Nothing is uploaded.</p>
+  <form id="pointForm"></form>
+</main>
+<script>
+var COLUMNS = [
+  "ANCHOR", "TIME", "FILE1", "RECONFILE1", "ID", "Country", "Basin_Sub_",
+  "Group", "Formation", "Member", "Well name/ outcrop", "Latitude", "Longitude",
+  "Dating evidence", "REF(Authors, Year)", "Show_on_Ma",
+  "Lithology, structures, paleowind", "Paleoenvironment", "REF (Authors, Year)",
+  "Fossil occurrences", "REF (Authors, Year)_1", "Geochemistry data",
+  "REF (Authors, Year)_2",
+  "Sediment-based climate inference (hot/cold, humid/semi-arid/desert)",
+  "Fossil-based climate inference (hot/cold, humid/semi-arid/desert)",
+  "Geochemistry-based climate inference  (hot/cold, humid/semi-arid/desert)",
+  "Climate assignment leading evidence", "Climate_Cl", "PlateID"
+];
+var LONG = {
+  "Lithology, structures, paleowind": true,
+  "Paleoenvironment": true,
+  "Dating evidence": true,
+  "Fossil occurrences": true,
+  "Geochemistry data": true,
+  "Climate assignment leading evidence": true
+};
+var form = document.getElementById("pointForm");
+COLUMNS.forEach(function (name) {
+  var label = document.createElement("label");
+  label.textContent = name;
+  var field;
+  if (name === "Climate_Cl") {
+    field = document.createElement("select");
+    ["", "D", "S", "H"].forEach(function (code) {
+      var option = document.createElement("option");
+      option.value = code;
+      option.textContent = code || "—";
+      field.appendChild(option);
+    });
+  } else if (LONG[name]) {
+    field = document.createElement("textarea");
+  } else {
+    field = document.createElement("input");
+    field.type = (name === "Latitude" || name === "Longitude" || name === "TIME") ? "number" : "text";
+    if (name === "Latitude" || name === "Longitude") field.step = "any";
+    if (name === "TIME") field.step = "1";
+  }
+  field.name = name;
+  if (name === "Latitude" || name === "Longitude" || name === "ID" || name === "Climate_Cl") {
+    field.required = true;
+  }
+  label.appendChild(field);
+  form.appendChild(label);
+});
+var button = document.createElement("button");
+button.type = "submit";
+button.textContent = "Download GeoJSON";
+form.appendChild(button);
+form.addEventListener("submit", function (event) {
+  event.preventDefault();
+  var props = {};
+  COLUMNS.forEach(function (name) {
+    props[name] = form.elements[name].value;
+  });
+  var feature = {
+    type: "Feature",
+    properties: props,
+    geometry: {
+      type: "Point",
+      coordinates: [Number(props.Longitude), Number(props.Latitude)]
+    }
+  };
+  var blob = new Blob([JSON.stringify({type: "FeatureCollection", features: [feature]}, null, 2)], {type: "application/geo+json"});
+  var url = URL.createObjectURL(blob);
+  var link = document.createElement("a");
+  link.href = url;
+  link.download = "added_point.geojson";
+  link.click();
+  URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>

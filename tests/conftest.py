@@ -5,6 +5,7 @@ from __future__ import annotations
 import socket
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import re
 
 import pytest
 
@@ -100,10 +101,17 @@ def browser(pytestconfig):
 
 @pytest.fixture
 def context(browser):
+    gate = (REPO_ROOT / 'viewer_gate.js').read_text(encoding='utf-8')
+    match = re.search(r'PCVS_PASSWORD_SHA256 = "([0-9a-f]+)"', gate)
+    if not match:
+        raise RuntimeError('viewer_gate.js is missing PCVS_PASSWORD_SHA256')
     ctx = browser.new_context(
         viewport={'width': 1440, 'height': 900},
         locale='en-US',
         accept_downloads=True,
+    )
+    ctx.add_init_script(
+        "sessionStorage.setItem('pcvs-auth', '%s');" % match.group(1)
     )
     yield ctx
     ctx.close()

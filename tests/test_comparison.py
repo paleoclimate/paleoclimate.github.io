@@ -190,3 +190,10 @@ def test_gcp_picker_age_switch_keeps_state_per_age(page, base_url):
     page.locator('#ageSel').select_option(first)
     page.wait_for_timeout(200)
     assert 'Pares: 1' in page.locator('#status').inner_text()
+
+
+def test_hay_images_are_absent_and_floegel_images_are_present():
+    import compare_floegel as comparison
+
+    assert comparison.atlas_images_present('hay') == []
+    assert set(comparison.atlas_images_present('floegel')) == {'105', '115'}

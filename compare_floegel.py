@@ -53,7 +53,7 @@ INPUT_DIR = os.path.join(COMP_DIR, 'inputs')
 GEOTIFF_DIR = os.path.join(BASE_DIR, 'GENERATED_GEOTIFFS')
 GEOJSON_DIR = os.path.join(BASE_DIR, 'GEOJSON')
 
-GEOTIFF_SUFFIX = 'knn_idw_power4.0_gradient_sharp18.0_kdtree'
+GEOTIFF_SUFFIX = 'knn_idw_power4.0_smooth2.0_class-thirds_kdtree'
 
 # Class codes
 DRY, SEMI, HUMID = 1, 2, 3
@@ -91,7 +91,17 @@ def geotiff_path(age):
 
 
 def floegel_path(age):
-    return os.path.join(INPUT_DIR, f'{age}_floegel.png')
+    return atlas_image_path('floegel', age)
+
+
+def atlas_image_path(atlas, age):
+    """Published-map image for one atlas: ``floegel`` or ``hay``."""
+    return os.path.join(INPUT_DIR, f'{age}_{atlas}.png')
+
+
+def atlas_images_present(atlas, ages=AGES):
+    """Ages whose ``{age}_{atlas}.png`` is in ``COMPARISON/inputs``."""
+    return [age for age in ages if os.path.isfile(atlas_image_path(atlas, age))]
 
 
 def coastline_path(age):
@@ -1008,6 +1018,17 @@ def cmd_render_reference(args):
 
 def cmd_compare(args):
     ages = [args.age] if args.age else list(AGES)
+    atlas = getattr(args, 'atlas', 'floegel')
+    if atlas == 'hay':
+        present = atlas_images_present('hay', ages)
+        if not present:
+            print('[compare] No Hay images in COMPARISON/inputs '
+                  '(expected {age}_hay.png). Hay was not scored.')
+            return
+        print('[compare] Hay images found for: ' + ', '.join(present))
+        print('[compare] Hay still needs its own control points. '
+              'This round does not invent them.')
+        return
     prototypes = extract_legend_prototypes(os.path.join(INPUT_DIR, 'legenda.png'))
     print(f"[compare] legend prototypes: "
           f"{[(rgb, CLASS_NAMES[c]) for rgb, c in prototypes]}")
@@ -1067,6 +1088,8 @@ def main():
 
     p_cmp = sub.add_parser('compare', help='Warp + metricas + relatorio')
     p_cmp.add_argument('--age', choices=AGES, help='Processar apenas esta idade')
+    p_cmp.add_argument('--atlas', choices=('floegel', 'hay'), default='floegel',
+                       help='Published atlas to score. Hay needs COMPARISON/inputs/{age}_hay.png')
     p_cmp.set_defaults(func=cmd_compare)
 
     args = parser.parse_args()
