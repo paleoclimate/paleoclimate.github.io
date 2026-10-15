@@ -173,4 +173,4 @@ Results: open `COMPARISON/index_comparison.html` for HTML reports and CSV metric
 - 145 Ma is generated with the other ages and is left out of the viewer age list
 - Use the fullscreen button for better viewing
 - The measurement tool allows you to measure distances on the map
-- In the viewer, the arrow keys step through ages and `P` exports a PDF
+- In the viewer, the age menu changes the reconstruction age and `P` exports a PDF

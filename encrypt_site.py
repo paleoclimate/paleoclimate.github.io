@@ -113,17 +113,21 @@ def encrypt_html(source: Path, destination: Path, *, force: bool) -> None:
             produced = found[0]
         payload = produced.read_bytes()
     destination.parent.mkdir(parents=True, exist_ok=True)
-    # Windows refuses to replace a file another process has mapped. Retry.
+    # Windows refuses to truncate a file another process has mapped (EINVAL).
+    # Write aside, then replace, and keep trying until the lock clears.
+    temporary = destination.with_name(destination.name + '.writing')
+    temporary.write_bytes(payload)
     last_error = None
-    for attempt in range(8):
+    for attempt in range(12):
         try:
-            destination.write_bytes(payload)
+            os.replace(temporary, destination)
             last_error = None
             break
         except OSError as exc:
             last_error = exc
-            time.sleep(0.4 * (attempt + 1))
+            time.sleep(0.5 * (attempt + 1))
     if last_error is not None:
+        temporary.unlink(missing_ok=True)
         raise last_error
     shown = destination.resolve()
     try:

@@ -4439,7 +4439,6 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   .btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
   .btn:disabled { opacity: 0.38; cursor: not-allowed; }
   .btn[hidden] { display: none; }
-  .btn-icon { padding: 6px 8px; font-size: 13px; line-height: 1; }
   .btn-primary {
     background: var(--accent);
     border-color: transparent;
@@ -4471,14 +4470,6 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     animation: spin 0.7s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* Younger and older steps. One age at a time; there is no slider. */
-  .timeline {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: none;
-  }
 
   .toggle {
     display: inline-flex;
@@ -4593,13 +4584,6 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <div class="timeline">
-    <button class="btn btn-icon" id="prevBtn" title="Younger reconstruction (←)"
-            aria-label="Younger age">&#9664;</button>
-    <button class="btn btn-icon" id="nextBtn" title="Older reconstruction (→)"
-            aria-label="Older age">&#9654;</button>
-  </div>
-
   <div class="spacer"></div>
 
   <div class="header-actions">
@@ -4635,8 +4619,6 @@ var comboLabel = document.getElementById('ageBtnLabel');
 var comboMenu = document.getElementById('ageMenu');
 var ctxAge = document.getElementById('ctxAge');
 var ctxSub = document.getElementById('ctxSub');
-var prevBtn = document.getElementById('prevBtn');
-var nextBtn = document.getElementById('nextBtn');
 var pdfBtn = document.getElementById('pdfBtn');
 var comparisonBtn = document.getElementById('comparisonBtn');
 var loader = document.getElementById('loader');
@@ -4686,8 +4668,6 @@ function preview(idx) {
   ageOptions.forEach(function(option, i) {
     option.setAttribute('aria-selected', i === at ? 'true' : 'false');
   });
-  prevBtn.disabled = at === 0;
-  nextBtn.disabled = at === MAPS.length - 1;
 }
 
 function openCombo() {
@@ -4837,8 +4817,6 @@ comboBtn.addEventListener('keydown', function(event) {
 document.addEventListener('click', function(event) {
   if (!combo.contains(event.target)) closeCombo();
 });
-prevBtn.addEventListener('click', function() { selectMap(current - 1); });
-nextBtn.addEventListener('click', function() { selectMap(current + 1); });
 pdfBtn.addEventListener('click', exportPdf);
 comparisonBtn.addEventListener('click', function() {
   var entry = MAPS[current];
@@ -4857,9 +4835,7 @@ document.addEventListener('keydown', function(event) {
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   var tag = (event.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
-  if (event.key === 'ArrowLeft') { selectMap(current - 1); event.preventDefault(); }
-  else if (event.key === 'ArrowRight') { selectMap(current + 1); event.preventDefault(); }
-  else if (event.key === 'p' || event.key === 'P') { exportPdf(); }
+  if (event.key === 'p' || event.key === 'P') exportPdf();
 });
 
 /* The password shell saves the session key after document.write returns.
