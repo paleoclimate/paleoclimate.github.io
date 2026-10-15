@@ -9,6 +9,8 @@ playwright>=1.40.0
 pytest>=8.0.0
 # For color classification on raster PNGs
 opencv-python-headless>=4.9.0
+# Tests decrypt StatiCrypt pages. Publishing uses the Node staticrypt CLI.
+cryptography>=42.0.0
 # Optional: RAM (RSS) metrics; on Linux /proc is used when absent
 psutil>=5.9.0
 

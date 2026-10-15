@@ -83,6 +83,15 @@ Com os JSON na pasta `COMPARISON/`:
 python compare_floegel.py compare
 ```
 
+Hay uses the same comparison once `COMPARISON/inputs/{age}_hay.png` exists.
+Those images are not in this repository, so Hay is not scored. The Floegel
+reports on disk were picked against an older GeoTIFF name and are not
+recomputed here.
+
+```bash
+python compare_floegel.py compare --atlas hay
+```
+
 Isso gera, para cada idade:
 
 | Arquivo | Conteúdo |
@@ -109,7 +118,7 @@ python compare_floegel.py compare --age 115
 |---------|-------------|
 | `python compare_floegel.py pick-gcps` | Regenerar só o `gcp_picker.html` (por exemplo, após trocar os PNGs do Floegel em `inputs/`) |
 | `python compare_floegel.py pick-gcps --no-refresh` | Regenerar o HTML sem re-renderizar a partir do GeoTIFF (só se você tem certeza de que o render já está atualizado) |
-| `python compare_floegel.py --suffix <sufixo> ...` | Usar GeoTIFFs com outro sufixo de parâmetros (default: `knn_idw_power4.0_gradient_sharp18.0_kdtree`) |
+| `python compare_floegel.py --suffix <sufixo> ...` | Usar GeoTIFFs com outro sufixo de parâmetros (default: `knn_idw_power4.0_smooth2.0_class-thirds_kdtree`, o raster que o mapa exibe) |
 
 ---
 

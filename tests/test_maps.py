@@ -54,10 +54,11 @@ def test_map_controls_and_layers(page, base_url, age):
     for name in LAYER_NAMES:
         assert any(name in label for label in labels), f'{name} missing from {labels}'
         assert overlay_checked(frame, name) is True
+    if any('Basins' in label for label in labels):
+        assert overlay_checked(frame, 'Basins') is True, labels
 
     import render_map as renderer
-    if any(renderer.LAYER_PALEOZONES in label for label in labels):
-        assert overlay_checked(frame, renderer.LAYER_PALEOZONES) is True
+    assert not any(renderer.LAYER_PALEOZONES in label for label in labels), labels
 
     state = frame.evaluate(MAP_STATE)
     assert state is not None
@@ -200,14 +201,16 @@ def _wait_map_idle(page):
     )
 
 
-def test_hover_shows_the_basin_or_the_point_and_skips_paleozones(page, tmp_path):
-    """All layers on: paleozone hover is empty, basin names itself, point wins."""
+def test_hover_shows_the_basin_or_the_point(page, tmp_path):
+    """Basin names itself. A plotted point wins. Paleozones are not a layer."""
     page.goto(write_hover_stack_map(tmp_path).as_uri(), wait_until='domcontentloaded')
     wait_leaflet_ready(page)
     # fitBounds animates. A basin added mid-zoom is projected into the wrong
-    # pixel space and its hit target covers the paleozone.
+    # pixel space and its hit target misses the interior.
     _wait_map_idle(page)
-    for name in ('Paleozones', 'Basins', 'Coastlines', 'Data points'):
+    labels = layer_labels(page)
+    assert 'Paleozones' not in labels
+    for name in ('Basins', 'Coastlines', 'Data points'):
         if overlay_checked(page, name) is not True:
             toggle_overlay(page, name)
     _wait_map_idle(page)
@@ -300,6 +303,18 @@ def test_basin_filter_search_clear_and_restore(page, base_url, age):
     checkboxes = frame.locator('.basin-filter-list input[type="checkbox"]')
     assert checkboxes.count() >= 1
     assert frame.locator('.basin-filter-search').get_attribute('placeholder')
+    contained = frame.evaluate(
+        """() => {
+          const input = document.querySelector('.basin-filter-search');
+          const card = document.querySelector('.basin-filter-body');
+          const field = input.getBoundingClientRect();
+          const panel = card.getBoundingClientRect();
+          return (panel.right - field.right) >= 8
+              && (field.left - panel.left) >= 8
+              && field.width > 40;
+        }"""
+    )
+    assert contained, 'Basin search has no inset from the filter card'
 
     badge = frame.locator('.basin-filter-count').inner_text().strip()
     assert re_match_count(badge)
@@ -343,8 +358,10 @@ def test_color_stats_cover_the_three_climate_classes(page, base_url, age):
     panel = frame.locator('.color-stats-control')
     text = panel.inner_text()
     lowered = text.lower()
-    for label in ('dry', 'semi-arid', 'humid', 'raster coverage'):
+    for label in ('dry', 'semi-arid', 'humid', 'raster coverage', 'data points'):
         assert label in lowered, f'{label} missing from color stats'
+    count_text = panel.locator('.pcvs-point-count strong').inner_text().replace(',', '')
+    assert int(count_text) > 0
     percents = _color_stats_percents(frame)
     assert len(percents) == 3
     assert all(value >= 0 for value in percents)
@@ -361,7 +378,35 @@ def test_data_point_popup_describes_a_formation(page, base_url, age):
     text = popup.first.inner_text()
     assert 'Basin' in text
     assert 'Climate' in text
+    assert 'Reference' in text
+    assert 'Paleoenvironment' not in text
     assert any(word in text for word in ('Humid', 'Dry', 'Semi-arid', 'Data point'))
+    popup.locator('summary').first.click()
+    opened = popup.first.inner_text()
+    assert 'Paleoenvironment' in opened
+    assert 'Dating Evidence' in opened
+    assert 'Lithology' in opened
+    max_height = frame.locator('.pcvs-popup').first.evaluate(
+        "el => getComputedStyle(el).maxHeight"
+    )
+    assert max_height == '280px'
+    box = frame.locator('.leaflet-popup-content').first.bounding_box()
+    assert box and box['height'] <= 320
+    na = frame.locator('.pcvs-na')
+    if na.count():
+        lines = na.first.evaluate('el => el.getClientRects().length')
+        assert lines == 1, 'N/A wrapped onto more than one line'
+    wide = frame.evaluate(
+        """() => {
+          const card = document.querySelector('.pcvs-popup');
+          const note = document.querySelector('.pcvs-more-value');
+          if (!card || !note) return false;
+          const cardBox = card.getBoundingClientRect();
+          const noteBox = note.getBoundingClientRect();
+          return noteBox.width >= cardBox.width * 0.8 && cardBox.width >= 240;
+        }"""
+    )
+    assert wide, 'The plus notes are still squeezed into a narrow column'
 
 
 @pytest.mark.parametrize('age', representative_ages())
@@ -604,11 +649,10 @@ def test_pre_rendered_pdfs_are_served(page, base_url):
 @pytest.mark.slow
 def test_live_pdf_export_from_viewer(page, base_url):
     goto_viewer(page, base_url)
-    page.locator('#rasterOnly').uncheck()
     with page.expect_download(timeout=90_000) as download_info:
         page.locator('#pdfBtn').click()
     download = download_info.value
-    assert download.suggested_filename.endswith('.pdf')
+    assert download.suggested_filename.endswith('_raster.pdf')
     body = download.path()
     assert body, 'Live PDF download did not land on disk'
     assert body.stat().st_size > 1000
