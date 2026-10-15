@@ -4472,29 +4472,12 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Age timeline. flex-shrink is 0 so showing Comparison on 105/115 Ma
-     cannot steal width from the slider. Extra chrome comes out of .spacer. */
+  /* Younger and older steps. One age at a time; there is no slider. */
   .timeline {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex: 1 0 260px;
-    max-width: 460px;
-  }
-  .timeline input[type="range"] {
-    flex: 1;
-    min-width: 90px;
-    height: 22px;
-    accent-color: var(--accent);
-    background: transparent;
-    cursor: pointer;
-  }
-  .timeline-hint {
-    font-size: 9.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--on-header-dim);
-    white-space: nowrap;
+    flex: none;
   }
 
   .toggle {
@@ -4516,8 +4499,8 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     gap: 10px;
     flex: none;
   }
-  /* Keep the Comparison slot on every age. display:none would hand that
-     width back to the timeline when leaving 105/115 Ma. */
+  /* Keep the Comparison slot on every age so the header does not shift
+     when leaving 105/115 Ma. */
   #comparisonBtn.is-absent {
     visibility: hidden;
     pointer-events: none;
@@ -4576,14 +4559,12 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   .toast.error { background: #7f1d1d; }
 
   @media (max-width: 1200px) {
-    .timeline-hint { display: none; }
     .context-sub { display: none; }
     .brand-meta { max-width: none; }
   }
   @media (max-width: 900px) {
     header { flex-wrap: wrap; gap: 10px 14px; }
     .divider { display: none; }
-    .timeline { order: 10; flex-basis: 100%; max-width: none; }
   }
 </style>
 </head>
@@ -4613,15 +4594,10 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <div class="timeline">
-    <span class="timeline-hint">Recent</span>
     <button class="btn btn-icon" id="prevBtn" title="Younger reconstruction (←)"
             aria-label="Younger age">&#9664;</button>
-    <input type="range" id="ageRange" min="0" max="0" step="1" list="ageTicks"
-           aria-label="Age timeline">
-    <datalist id="ageTicks"></datalist>
     <button class="btn btn-icon" id="nextBtn" title="Older reconstruction (→)"
             aria-label="Older age">&#9654;</button>
-    <span class="timeline-hint">Ancient</span>
   </div>
 
   <div class="spacer"></div>
@@ -4659,8 +4635,6 @@ var comboLabel = document.getElementById('ageBtnLabel');
 var comboMenu = document.getElementById('ageMenu');
 var ctxAge = document.getElementById('ctxAge');
 var ctxSub = document.getElementById('ctxSub');
-var range = document.getElementById('ageRange');
-var ticks = document.getElementById('ageTicks');
 var prevBtn = document.getElementById('prevBtn');
 var nextBtn = document.getElementById('nextBtn');
 var pdfBtn = document.getElementById('pdfBtn');
@@ -4701,8 +4675,7 @@ function clamp(idx) {
   return Math.max(0, Math.min(MAPS.length - 1, idx));
 }
 
-/* Update the header for an age without reloading the map, so dragging the
-   timeline stays responsive instead of loading every age it passes over. */
+/* Sync the header with an age index. The map loads in selectMap. */
 function preview(idx) {
   var at = clamp(idx);
   var entry = MAPS[at];
@@ -4713,7 +4686,6 @@ function preview(idx) {
   ageOptions.forEach(function(option, i) {
     option.setAttribute('aria-selected', i === at ? 'true' : 'false');
   });
-  range.value = String(at);
   prevBtn.disabled = at === 0;
   nextBtn.disabled = at === MAPS.length - 1;
 }
@@ -4842,13 +4814,7 @@ MAPS.forEach(function(entry, i) {
   });
   comboMenu.appendChild(option);
   ageOptions.push(option);
-
-  var tick = document.createElement('option');
-  tick.value = String(i);
-  tick.label = entry.label;
-  ticks.appendChild(tick);
 });
-range.max = String(MAPS.length - 1);
 
 comboBtn.addEventListener('click', function(event) {
   event.stopPropagation();
@@ -4871,8 +4837,6 @@ comboBtn.addEventListener('keydown', function(event) {
 document.addEventListener('click', function(event) {
   if (!combo.contains(event.target)) closeCombo();
 });
-range.addEventListener('input', function() { preview(Number(this.value)); });
-range.addEventListener('change', function() { selectMap(Number(this.value)); });
 prevBtn.addEventListener('click', function() { selectMap(current - 1); });
 nextBtn.addEventListener('click', function() { selectMap(current + 1); });
 pdfBtn.addEventListener('click', exportPdf);
