@@ -5,11 +5,9 @@ from __future__ import annotations
 import socket
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-import re
-
 import pytest
 
-from tests.helpers import REPO_ROOT
+from tests.helpers import REPO_ROOT, auth_init_script
 
 
 class _SilentHandler(SimpleHTTPRequestHandler):
@@ -101,18 +99,12 @@ def browser(pytestconfig):
 
 @pytest.fixture
 def context(browser):
-    gate = (REPO_ROOT / 'viewer_gate.js').read_text(encoding='utf-8')
-    match = re.search(r'PCVS_PASSWORD_SHA256 = "([0-9a-f]+)"', gate)
-    if not match:
-        raise RuntimeError('viewer_gate.js is missing PCVS_PASSWORD_SHA256')
     ctx = browser.new_context(
         viewport={'width': 1440, 'height': 900},
         locale='en-US',
         accept_downloads=True,
     )
-    ctx.add_init_script(
-        "sessionStorage.setItem('pcvs-auth', '%s');" % match.group(1)
-    )
+    ctx.add_init_script(auth_init_script())
     yield ctx
     ctx.close()
 
@@ -121,6 +113,18 @@ def context(browser):
 def page(context):
     page = context.new_page()
     page.set_default_timeout(20_000)
+    raw_goto = page.goto
+
+    def goto(url, *args, **kwargs):
+        result = raw_goto(url, *args, **kwargs)
+        page.wait_for_function(
+            """() => !document.getElementById('staticrypt-password')
+                  && !document.getElementById('staticrypt_loading')""",
+            timeout=120_000,
+        )
+        return result
+
+    page.goto = goto
     errors = []
 
     def on_page_error(exc):

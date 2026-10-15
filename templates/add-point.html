@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PCVS · Add points</title>
+<style>
+  :root { --ink: #0f172a; --muted: #64748b; --line: rgba(148, 163, 184, .45); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    color: var(--ink);
+    background: #eef0f2;
+  }
+  main { max-width: 880px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  h2 { font-size: 14px; margin: 22px 0 10px; }
+  .lead { color: var(--muted); font-size: 13px; margin: 0 0 18px; max-width: 40rem; }
+  .fields { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: start; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 650; }
+  input, textarea, select {
+    font: inherit;
+    font-weight: 450;
+    width: 18rem;
+    max-width: 100%;
+    padding: 7px 8px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+  }
+  label.short input, label.short select { width: 9rem; }
+  label.note textarea { width: 28rem; min-height: 72px; resize: vertical; }
+  button {
+    margin-top: 16px;
+    padding: 8px 14px;
+    border: 0;
+    border-radius: 8px;
+    background: #2f6fed;
+    color: #fff;
+    font: inherit;
+    cursor: pointer;
+  }
+  a { color: #2f6fed; }
+</style>
+</head>
+<body>
+<main>
+  <p><a href="index.html">Back to the atlas</a></p>
+  <h1>Add points</h1>
+  <p class="lead">One GeoJSON feature for the local GEOJSON folder. Nothing is uploaded.</p>
+  <form id="pointForm">
+    <div class="fields" id="essential"></div>
+    <h2>Optional</h2>
+    <div class="fields" id="optional"></div>
+    <button type="submit">Download GeoJSON</button>
+  </form>
+</main>
+<script>
+var AGES = [65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145];
+var RECONFILE = "Zahirovic_etal_2022_OptimisedMantleRef_and_NNRMantleRef.rot";
+var ESSENTIAL = [
+  {name: "Latitude", kind: "float", min: -90, max: 90, required: true, short: true},
+  {name: "Longitude", kind: "float", min: -180, max: 180, required: true, short: true},
+  {name: "TIME", kind: "age", required: true, short: true},
+  {name: "Climate_Cl", kind: "climate", required: true, short: true},
+  {name: "Country", kind: "text"},
+  {name: "Basin_Sub_", kind: "text"},
+  {name: "Formation", kind: "text"},
+  {name: "Group", kind: "text"},
+  {name: "Member", kind: "text"},
+  {name: "Well name/ outcrop", kind: "text"},
+  {name: "Show_on_Ma", kind: "age", short: true},
+  {name: "PlateID", kind: "int", short: true},
+  {name: "REF(Authors, Year)", kind: "text"}
+];
+var OPTIONAL = [
+  {name: "Dating evidence", kind: "note"},
+  {name: "Lithology, structures, paleowind", kind: "note"},
+  {name: "Paleoenvironment", kind: "note"},
+  {name: "REF (Authors, Year)", kind: "text"},
+  {name: "Fossil occurrences", kind: "note"},
+  {name: "REF (Authors, Year)_1", kind: "text"},
+  {name: "Geochemistry data", kind: "note"},
+  {name: "REF (Authors, Year)_2", kind: "text"},
+  {name: "Sediment-based climate inference (hot/cold, humid/semi-arid/desert)", kind: "text"},
+  {name: "Fossil-based climate inference (hot/cold, humid/semi-arid/desert)", kind: "text"},
+  {name: "Geochemistry-based climate inference  (hot/cold, humid/semi-arid/desert)", kind: "text"},
+  {name: "Climate assignment leading evidence", kind: "note"}
+];
+var FLOAT = /^-?\d+(?:\.\d+)?$/;
+var INTEGER = /^\d+$/;
+
+function addOption(select, value, label, disabled) {
+  var option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  if (disabled) option.disabled = true;
+  select.appendChild(option);
+}
+
+function makeField(spec) {
+  var label = document.createElement("label");
+  label.className = spec.short ? "short" : (spec.kind === "note" ? "note" : "");
+  label.appendChild(document.createTextNode(spec.name));
+  var field;
+  if (spec.kind === "climate") {
+    field = document.createElement("select");
+    addOption(field, "", "Choose", true);
+    addOption(field, "D", "Dry (D)");
+    addOption(field, "S", "Semi-arid (S)");
+    addOption(field, "H", "Humid (H)");
+    field.selectedIndex = 0;
+  } else if (spec.kind === "age") {
+    field = document.createElement("select");
+    if (spec.required) addOption(field, "", "Choose", true);
+    else addOption(field, "", "—");
+    AGES.forEach(function (age) { addOption(field, String(age), age + " Ma"); });
+    field.selectedIndex = 0;
+  } else if (spec.kind === "note") {
+    field = document.createElement("textarea");
+  } else {
+    field = document.createElement("input");
+    field.type = "text";
+    field.autocomplete = "off";
+    if (spec.kind === "float") {
+      field.inputMode = "decimal";
+      field.pattern = "^-?\\d+(\\.\\d+)?$";
+      field.title = "Use a dot as the decimal separator.";
+      field.lang = "en";
+    } else if (spec.kind === "int") {
+      field.inputMode = "numeric";
+      field.pattern = "\\d+";
+      field.title = "Use a positive integer.";
+    }
+  }
+  field.name = spec.name;
+  if (spec.required) field.required = true;
+  if (spec.kind === "float") {
+    field.addEventListener("input", function () {
+      var value = field.value.trim();
+      if (!value) {
+        field.setCustomValidity(spec.required ? "Required." : "");
+        return;
+      }
+      if (!FLOAT.test(value)) {
+        field.setCustomValidity("Use a dot as the decimal separator.");
+        return;
+      }
+      var number = Number(value);
+      if (number < spec.min || number > spec.max) {
+        field.setCustomValidity(spec.name + " must be between " + spec.min + " and " + spec.max + ".");
+        return;
+      }
+      field.setCustomValidity("");
+    });
+  } else if (spec.kind === "int") {
+    field.addEventListener("input", function () {
+      var value = field.value.trim();
+      field.setCustomValidity(value && !INTEGER.test(value) ? "Use a positive integer." : "");
+    });
+  }
+  label.appendChild(field);
+  return label;
+}
+
+ESSENTIAL.forEach(function (spec) {
+  document.getElementById("essential").appendChild(makeField(spec));
+});
+OPTIONAL.forEach(function (spec) {
+  document.getElementById("optional").appendChild(makeField(spec));
+});
+
+function textOrNull(form, name) {
+  var value = form.elements[name].value.trim();
+  return value ? value : null;
+}
+
+function stamp() {
+  var now = new Date();
+  function pad(number) { return String(number).padStart(2, "0"); }
+  return now.getFullYear()
+    + pad(now.getMonth() + 1)
+    + pad(now.getDate())
+    + "-"
+    + pad(now.getHours())
+    + pad(now.getMinutes())
+    + pad(now.getSeconds());
+}
+
+var form = document.getElementById("pointForm");
+form.addEventListener("submit", function (event) {
+  event.preventDefault();
+  ["Latitude", "Longitude", "PlateID"].forEach(function (name) {
+    var field = form.elements[name];
+    field.value = field.value.trim();
+    field.dispatchEvent(new Event("input"));
+  });
+  if (!form.reportValidity()) return;
+  var filename = "point-" + stamp() + ".geojson";
+  var latitude = Number(form.elements.Latitude.value);
+  var longitude = Number(form.elements.Longitude.value);
+  var time = Number(form.elements.TIME.value);
+  var show = form.elements.Show_on_Ma.value;
+  var plate = form.elements.PlateID.value.trim();
+  var props = {
+    "ANCHOR": 0,
+    "TIME": time,
+    "FILE1": filename,
+    "RECONFILE1": RECONFILE,
+    "ID": null,
+    "Country": textOrNull(form, "Country"),
+    "Basin_Sub_": textOrNull(form, "Basin_Sub_"),
+    "Group": textOrNull(form, "Group"),
+    "Formation": textOrNull(form, "Formation"),
+    "Member": textOrNull(form, "Member"),
+    "Well name/ outcrop": textOrNull(form, "Well name/ outcrop"),
+    "Latitude": latitude,
+    "Longitude": longitude,
+    "Dating evidence": textOrNull(form, "Dating evidence"),
+    "REF(Authors, Year)": textOrNull(form, "REF(Authors, Year)"),
+    "Show_on_Ma": show ? Number(show) : null,
+    "Lithology, structures, paleowind": textOrNull(form, "Lithology, structures, paleowind"),
+    "Paleoenvironment": textOrNull(form, "Paleoenvironment"),
+    "REF (Authors, Year)": textOrNull(form, "REF (Authors, Year)"),
+    "Fossil occurrences": textOrNull(form, "Fossil occurrences"),
+    "REF (Authors, Year)_1": textOrNull(form, "REF (Authors, Year)_1"),
+    "Geochemistry data": textOrNull(form, "Geochemistry data"),
+    "REF (Authors, Year)_2": textOrNull(form, "REF (Authors, Year)_2"),
+    "Sediment-based climate inference (hot/cold, humid/semi-arid/desert)": textOrNull(form, "Sediment-based climate inference (hot/cold, humid/semi-arid/desert)"),
+    "Fossil-based climate inference (hot/cold, humid/semi-arid/desert)": textOrNull(form, "Fossil-based climate inference (hot/cold, humid/semi-arid/desert)"),
+    "Geochemistry-based climate inference  (hot/cold, humid/semi-arid/desert)": textOrNull(form, "Geochemistry-based climate inference  (hot/cold, humid/semi-arid/desert)"),
+    "Climate assignment leading evidence": textOrNull(form, "Climate assignment leading evidence"),
+    "Climate_Cl": form.elements.Climate_Cl.value,
+    "PlateID": plate ? Number(plate) : null
+  };
+  var feature = {
+    type: "Feature",
+    properties: props,
+    geometry: {type: "Point", coordinates: [longitude, latitude]}
+  };
+  var blob = new Blob(
+    [JSON.stringify({type: "FeatureCollection", features: [feature]}, null, 2)],
+    {type: "application/geo+json"}
+  );
+  var url = URL.createObjectURL(blob);
+  var link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>

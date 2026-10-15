@@ -14,6 +14,7 @@ import copy
 import html
 import math
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -3322,20 +3323,6 @@ def _add_export_api(map_obj, raster_bounds, full_bounds, export_basename):
     """, config=config, coastline_color=json.dumps(COASTLINE_COLOR))
 
 
-def _add_viewer_gate(map_obj):
-    """Ask for the shared password before a generated map draws.
-
-    The script lives at the repo root. Generated maps sit one folder down.
-    """
-    gate = MacroElement()
-    gate._template = Template("""
-        {% macro header(this, kwargs) %}
-        <script src="../viewer_gate.js"></script>
-        {% endmacro %}
-    """)
-    map_obj.get_root().add_child(gate)
-
-
 def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.html', 
                raster_img_path='raster_overlay.png',
                point_values_override=None, raster_layer_name=LAYER_RASTER,
@@ -3922,7 +3909,6 @@ def create_map(points_data, coastline_data, geotiff_path=None, output_file='map.
     folium.LayerControl(collapsed=False).add_to(m)
 
     _add_map_theme(m)
-    _add_viewer_gate(m)
 
     # Add measure tool
     plugins.MeasureControl().add_to(m)
@@ -4239,8 +4225,11 @@ def generate_index_html(dir_idw, output='index.html'):
             .replace('__MAPS__', json.dumps(maps_list, ensure_ascii=False))
             .replace('__BACKGROUND__', MAP_BACKGROUND))
 
-    with open(output, 'w', encoding='utf-8') as f:
-        f.write(html)
+    output = os.path.abspath(output)
+    temporary = output + '.tmp'
+    with open(temporary, 'w', encoding='utf-8', newline='\n') as handle:
+        handle.write(html)
+    os.replace(temporary, output)
     print(f"Index page generated: {output}")
 
 
@@ -4640,7 +4629,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   <div class="header-actions">
     <button type="button" class="btn is-absent" id="comparisonBtn"
             aria-hidden="true" tabindex="-1">Comparison</button>
-    <a class="btn" id="addPointBtn" href="add-point.html">Add point</a>
+    <a class="btn" id="addPointBtn" href="add-point.html">Add points</a>
     <button class="btn btn-primary" id="pdfBtn" title="Export the raster area as a vector PDF (P)">
       <span class="btn-ico" aria-hidden="true">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
@@ -4659,7 +4648,6 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </main>
 
-<script src="viewer_gate.js"></script>
 <script>
 var MAPS = __MAPS__;
 var STORAGE_KEY = 'pcvs:age';
@@ -4910,14 +4898,33 @@ document.addEventListener('keydown', function(event) {
   else if (event.key === 'p' || event.key === 'P') { exportPdf(); }
 });
 
-if (window.PCVS_AUTH && !window.PCVS_AUTH.unlocked()) {
-  window.PCVS_AUTH.whenUnlocked(function () { selectMap(initialIndex(), false); });
-} else {
-  selectMap(initialIndex(), false);
-}
+/* The password shell saves the session key after document.write returns.
+   Waiting one turn lets that key exist before the encrypted map iframe loads. */
+setTimeout(function () { selectMap(initialIndex(), false); }, 0);
 </script>
 </body>
 </html>"""
+
+def _publish_protected_site():
+    """Rescore Hay/Floegel on the new rasters, then encrypt the published HTML."""
+    repo = os.path.dirname(os.path.abspath(__file__))
+    compare = os.path.join(repo, 'compare_floegel.py')
+    environment = os.environ.copy()
+    environment['PYTHONIOENCODING'] = 'utf-8'
+    environment['PYTHONUNBUFFERED'] = '1'
+    commands = (
+        [sys.executable, '-u', compare, 'compare'],
+        [sys.executable, '-u', compare, 'compare', '--atlas', 'hay'],
+    )
+    for command in commands:
+        completed = subprocess.run(command, cwd=repo, env=environment)
+        if completed.returncode != 0:
+            completed = subprocess.run(command, cwd=repo, env=environment)
+        if completed.returncode != 0:
+            raise SystemExit('Comparison failed ({})'.format(' '.join(command)))
+    from encrypt_site import encrypt_published
+    encrypt_published()
+
 
 def _print_metrics_summary(total_elapsed, dataset_metrics, rss_start, rss_end, rss_peak):
     """Print a summary of execution times and RAM usage per dataset and overall."""
@@ -5208,6 +5215,7 @@ def main():
 
     with StepTimer("Generate index.html", indent=0) as t:
         generate_index_html(dir_idw_maps)
+    _publish_protected_site()
 
     script_rss_end = _RSS_SAMPLER.sample()
     # The kernel updates its high-water mark lazily, so a sampled value may top it.

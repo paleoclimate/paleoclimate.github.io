@@ -18,6 +18,7 @@ from tests.helpers import (
     entry_for_age,
     idw_html_files,
     is_valid_pdf,
+    read_html,
     knn_html_files,
     load_maps_catalog,
     overlay_png_for,
@@ -27,6 +28,23 @@ from tests.helpers import (
 
 def test_viewer_exists():
     assert INDEX_HTML.is_file(), 'index.html is missing; run python render_map.py'
+
+
+def test_published_html_is_staticrypt_ciphertext():
+    """A direct read of a published page is the password shell, not the map."""
+    from site_crypto import is_encrypted
+
+    pages = [INDEX_HTML, REPO_ROOT / 'add-point.html']
+    maps = idw_html_files()
+    assert maps, 'No generated maps to inspect'
+    pages.append(maps[0])
+    for path in pages:
+        raw = path.read_text(encoding='utf-8')
+        assert is_encrypted(raw), path.name
+        assert 'leaflet-container' not in raw
+        assert 'staticrypt-password' in raw
+        plain = read_html(path)
+        assert not is_encrypted(plain)
 
 
 def test_maps_catalog_is_well_formed():
@@ -144,7 +162,7 @@ def test_generated_html_embeds_map_chrome_and_export_api():
     )
     broken = []
     for path in html_files:
-        text = path.read_text(encoding='utf-8')
+        text = read_html(path)
         missing = [token for token in required if token not in text]
         if missing:
             broken.append(f'{path.name}: {missing}')
@@ -154,7 +172,7 @@ def test_generated_html_embeds_map_chrome_and_export_api():
 def test_layer_names_match_renderer_constants():
     import render_map as renderer
 
-    html = idw_html_files()[0].read_text(encoding='utf-8')
+    html = read_html(idw_html_files()[0])
     for name in (
         renderer.LAYER_RASTER,
         renderer.LAYER_COASTLINES,
@@ -188,7 +206,7 @@ def test_basin_outlines_layer_is_optional_and_matches_source():
         assert match, path.name
         base = match.group(1)
         has_file = (geojson / f'{base}{renderer.GEOJSON_BASINS_SUFFIX}').is_file()
-        text = path.read_text(encoding='utf-8')
+        text = read_html(path)
         has_layer = f'"{renderer.LAYER_BASINS}"' in text
         if has_file != has_layer:
             mismatches.append(
@@ -210,7 +228,7 @@ def test_paleozones_are_not_drawn():
     assert html_files, 'No generated maps to inspect'
     present = [
         path.name for path in html_files
-        if f'"{renderer.LAYER_PALEOZONES}"' in path.read_text(encoding='utf-8')
+        if f'"{renderer.LAYER_PALEOZONES}"' in read_html(path)
     ]
     assert not present, 'Paleozones layer is still drawn:\n' + '\n'.join(present)
 
@@ -219,13 +237,13 @@ def test_idw_maps_also_embed_export_api():
     files = idw_html_files()
     assert files, 'No IDW maps found'
     for path in files:
-        text = path.read_text(encoding='utf-8')
+        text = read_html(path)
         assert 'window.PCVS' in text, path.name
         assert 'leaflet-container' in text, path.name
 
 
 def test_viewer_shell_has_expected_controls():
-    html = INDEX_HTML.read_text(encoding='utf-8')
+    html = read_html(INDEX_HTML)
     for token in (
         'id="ageCombo"',
         'id="ageRange"',
@@ -233,6 +251,7 @@ def test_viewer_shell_has_expected_controls():
         'id="nextBtn"',
         'id="pdfBtn"',
         'id="comparisonBtn"',
+        'Add points',
         'id="mapFrame"',
         'id="loader"',
         'id="toast"',
@@ -344,7 +363,7 @@ def test_generated_popups_name_the_reference_and_repaired_places():
     forbidden = ('Alc?tara', 'S? Mateus', 'Alter do Ch?', 'Tr? Barras', 'Gon?lves')
     broken = []
     for path in files:
-        text = path.read_text(encoding='utf-8')
+        text = read_html(path)
         if '<dt>Reference</dt>' not in text or 'pcvs-more' not in text or 'Data points' not in text:
             broken.append(f'{path.name}: popup or color stats was not regenerated')
         for fragment in forbidden:
@@ -359,7 +378,7 @@ def test_generated_maps_keep_basin_accents():
     seen = set()
     broken = []
     for path in files:
-        basins = embedded_basins(path.read_text(encoding='utf-8'))
+        basins = embedded_basins(read_html(path))
         seen.update(basins)
         bad = [name for name in basins if '?' in name]
         if bad:
@@ -435,7 +454,7 @@ def test_html_markers_use_the_published_point_size():
     outer = renderer.POINT_OUTER_PX
     broken = []
     for path in files:
-        text = path.read_text(encoding='utf-8')
+        text = read_html(path)
         if f'"radius": {radius}' not in text:
             broken.append(f'{path.name}: CircleMarker radius is not {radius}')
         if f'"weight": {weight}' not in text:

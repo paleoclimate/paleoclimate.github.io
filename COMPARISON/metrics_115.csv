@@ -1,18 +1,19 @@
 Comparacao Floegel x GeoTIFF - 115 Ma
+Raster,115_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.tif
 
 "Matriz de confusao (linhas=GeoTIFF, colunas=Floegel)"
 ,Seco,Semi-arido,Umido
-Seco,83171,3911,0
-Semi-arido,23497,464,0
-Umido,201570,4195,0
+Seco,62695,1649,0
+Semi-arido,90035,5510,0
+Umido,143541,1353,0
 
 Similaridade por classe
 Classe,IoU (%),Recall (%),Precisao (%),Area GeoTIFF (%),Area Floegel (%)
-Seco,26.64,95.51,26.98,27.49,97.29
-Semi-arido,1.45,1.94,5.41,7.56,2.71
-Umido,0.00,0.00,0.00,64.95,0.00
+Seco,21.04,97.44,21.16,21.11,97.21
+Semi-arido,5.59,5.77,64.73,31.35,2.79
+Umido,0.00,0.00,0.00,47.54,0.00
 
 Similaridade geral
-Acuracia global (%),26.40
-Kappa de Cohen,-0.0075
-Pixels comparados,316808
+Acuracia global (%),22.38
+Kappa de Cohen,0.0125
+Pixels comparados,304783

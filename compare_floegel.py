@@ -40,6 +40,7 @@ from render_map import (
     load_geojson,
     CLIMATE_COLORS,
     _hex_to_rgb,
+    classify_climate_values,
     climate_values_to_rgb,
 )
 
@@ -116,20 +117,28 @@ def gcp_path(age):
     return os.path.join(COMP_DIR, f'gcp_{age}.json')
 
 
-def warped_path(age):
-    return os.path.join(COMP_DIR, f'warped_floegel_{age}.png')
+def warped_path(age, atlas='floegel'):
+    return os.path.join(COMP_DIR, f'warped_{atlas}_{age}.png')
 
 
-def classes_path(age):
-    return os.path.join(COMP_DIR, f'classes_{age}.png')
+def _atlas_file(prefix, age, atlas, extension):
+    if atlas == 'floegel':
+        return os.path.join(COMP_DIR, f'{prefix}_{age}.{extension}')
+    return os.path.join(COMP_DIR, f'{prefix}_{age}_{atlas}.{extension}')
 
 
-def metrics_path(age):
-    return os.path.join(COMP_DIR, f'metrics_{age}.csv')
+def classes_path(age, atlas='floegel'):
+    return _atlas_file('classes', age, atlas, 'png')
 
 
-def report_path(age):
-    return os.path.join(COMP_DIR, f'comparison_report_{age}.html')
+def metrics_path(age, atlas='floegel'):
+    return _atlas_file('metrics', age, atlas, 'csv')
+
+
+def report_path(age, atlas='floegel'):
+    if atlas == 'floegel':
+        return os.path.join(COMP_DIR, f'comparison_report_{age}.html')
+    return os.path.join(COMP_DIR, f'comparison_report_{age}_{atlas}.html')
 
 
 def _mtime(path):
@@ -156,15 +165,14 @@ def available_geotiffs():
 
 
 def gradient_sharp():
-    """The gradient_sharp factor the GeoTIFFs were published with.
+    """Sharp factor only when the published suffix still encodes one.
 
-    Read from GEOTIFF_SUFFIX so it cannot drift from the raster being compared:
-    'knn_idw_power4.0_gradient_sharp18.0_kdtree' -> 18.0.
+    The maps on the viewer are class thirds (``class-thirds`` in the suffix).
+    Those rasters have no sharp factor; coloring uses the class code itself.
     """
     match = re.search(r'gradient_sharp([0-9.]+)', GEOTIFF_SUFFIX)
     if not match:
-        raise ValueError(f"Nao achei 'gradient_sharp' no sufixo '{GEOTIFF_SUFFIX}'; "
-                         f"passe --suffix com o sufixo usado no render_map.py.")
+        return None
     return float(match.group(1).rstrip('.'))
 
 
@@ -321,16 +329,16 @@ def geotiff_render(age):
 
 
 def geotiff_classes(age):
-    """Classify the GeoTIFF into class codes as the published map renders it.
+    """Class codes of the GeoTIFF the viewer is painting.
 
-    Returns (classes (H,W) int, src_meta dict with transform + shape). Classes come
-    from the rendered colors, so they honour gradient_sharp instead of naive 1.5/2.5
-    cuts, which would report almost everything as Semi-arid.
+    The map colors each cell by equal thirds of [1, 3]. Scoring those codes,
+    not a recolor of an older render, is what the raster on screen shows.
     """
     data, meta = geotiff_values(age)
-    rgb, valid = values_to_rgb(data, gradient_sharp())
-    classes = rgb_to_classes(rgb)
-    classes[~valid] = 0
+    valid = np.isfinite(data)
+    classes = np.zeros(data.shape, dtype=np.int32)
+    if np.any(valid):
+        classes[valid] = classify_climate_values(data[valid]).astype(np.int32)
     return classes, meta
 
 
@@ -640,6 +648,107 @@ document.getElementById('exportBtn').addEventListener('click', function() {
 
 
 # ---------------------------------------------------------------------------
+# Control points on the raster the map is showing
+# ---------------------------------------------------------------------------
+
+def raster_stamp(age):
+    """Identity of the GeoTIFF behind the viewer overlay."""
+    with rasterio.open(geotiff_path(age)) as src:
+        return {
+            'raster': os.path.basename(geotiff_path(age)),
+            'width': int(src.width),
+            'height': int(src.height),
+        }
+
+
+def _write_gcp(path, data):
+    with open(path, 'w', encoding='utf-8') as handle:
+        json.dump(data, handle, indent=2)
+        handle.write('\n')
+
+
+def _coast_mask(gray):
+    mask = np.where(gray < 40, 255, 0).astype(np.uint8)
+    return cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=1)
+
+
+def _shift_gcps_onto_raster(old_bgr, age, points):
+    """Move control points picked on an older reference onto the current grid.
+
+    The coastline drawn on that image is the same shore the current raster
+    uses. A similarity fit of the two shores is the pixel mapping.
+    """
+    old_gray = cv2.cvtColor(old_bgr, cv2.COLOR_BGR2GRAY)
+    old_mask = _coast_mask(old_gray)
+    data, meta = geotiff_values(age)
+    canvas = np.full(data.shape + (3,), 255, np.uint8)
+    draw_coastline(canvas, meta, age)
+    new_mask = _coast_mask(cv2.cvtColor(canvas, cv2.COLOR_RGB2GRAY))
+
+    orb = cv2.ORB_create(3000)
+    keys_old, desc_old = orb.detectAndCompute(old_mask, None)
+    keys_new, desc_new = orb.detectAndCompute(new_mask, None)
+    if desc_old is None or desc_new is None:
+        raise RuntimeError(f'{age} Ma: coastline alignment found no features')
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    matches = sorted(matcher.match(desc_old, desc_new), key=lambda item: item.distance)[:80]
+    if len(matches) < 12:
+        raise RuntimeError(f'{age} Ma: coastline alignment has {len(matches)} matches')
+    source = np.float32([keys_old[item.queryIdx].pt for item in matches])
+    destination = np.float32([keys_new[item.trainIdx].pt for item in matches])
+    matrix, inliers = cv2.estimateAffinePartial2D(
+        source, destination, method=cv2.RANSAC, ransacReprojThreshold=8,
+    )
+    if matrix is None or inliers is None or int(inliers.sum()) < 40:
+        raise RuntimeError(f'{age} Ma: coastline alignment did not hold')
+    scale = float(matrix[0, 0])
+    if not 0.95 <= scale <= 1.05:
+        raise RuntimeError(f'{age} Ma: coastline scale {scale:.3f} is not the current raster')
+
+    kept = []
+    for point in points:
+        ref = np.array([point['ref'][0], point['ref'][1], 1.0], dtype=np.float64)
+        mapped = matrix @ ref
+        moved = dict(point)
+        moved['ref'] = [round(float(mapped[0]), 2), round(float(mapped[1]), 2)]
+        kept.append(moved)
+    print(f'[compare] {age} Ma control points shifted onto the current raster '
+          f'({int(inliers.sum())} coastline inliers, scale {scale:.3f})')
+    return kept
+
+
+def ensure_gcps_on_current_raster(age):
+    """Rewrite gcp_<age>.json so its reference pixels match the displayed raster."""
+    path = gcp_path(age)
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f'GCP file not found: {path}. Run the picker and export the JSON first.'
+        )
+    with open(path, encoding='utf-8') as handle:
+        data = json.load(handle)
+    stamp = raster_stamp(age)
+    if (data.get('raster') == stamp['raster']
+            and data.get('width') == stamp['width']
+            and data.get('height') == stamp['height']):
+        return
+    if not os.path.exists(reference_path(age)):
+        raise RuntimeError(
+            f'{age} Ma control points do not match {stamp["raster"]} and '
+            f'{_rel(reference_path(age))} is missing, so they cannot be moved.'
+        )
+    old = cv2.imread(reference_path(age), cv2.IMREAD_COLOR)
+    old_height, old_width = old.shape[:2]
+    if old_width == stamp['width'] and old_height == stamp['height']:
+        data.update(stamp)
+        _write_gcp(path, data)
+        print(f'[compare] {age} Ma control points already sit on the current raster')
+        return
+    data['points'] = _shift_gcps_onto_raster(old, age, data.get('points') or [])
+    data.update(stamp)
+    _write_gcp(path, data)
+
+
+# ---------------------------------------------------------------------------
 # Warp
 # ---------------------------------------------------------------------------
 
@@ -689,8 +798,8 @@ def build_warp_maps(ref_pts, flo_pts, width, height):
     return map_x, map_y, method
 
 
-def warp_floegel(age, meta):
-    """Warp the Floegel image onto the GeoTIFF grid. Returns (warped_rgb, valid_mask)."""
+def warp_atlas(age, meta, atlas='floegel'):
+    """Warp a published atlas image onto the current GeoTIFF grid."""
     gcps = load_gcps(age)
     if gcps is None:
         raise FileNotFoundError(
@@ -700,7 +809,9 @@ def warp_floegel(age, meta):
     ref_pts, flo_pts = gcps
     width, height = meta['width'], meta['height']
 
-    flo_bgr = cv2.imread(floegel_path(age))
+    flo_bgr = cv2.imread(atlas_image_path(atlas, age))
+    if flo_bgr is None:
+        raise FileNotFoundError(atlas_image_path(atlas, age))
     flo_rgb = cv2.cvtColor(flo_bgr, cv2.COLOR_BGR2RGB)
     fh, fw, _ = flo_rgb.shape
 
@@ -711,9 +822,15 @@ def warp_floegel(age, meta):
     # Valid where the sampled source coordinate lies inside the Floegel image.
     valid = (map_x >= 0) & (map_x < fw) & (map_y >= 0) & (map_y < fh)
 
-    cv2.imwrite(warped_path(age), cv2.cvtColor(warped, cv2.COLOR_RGB2BGR))
-    print(f"[compare] {age} Ma warp={method} ({len(ref_pts)} GCPs) -> {warped_path(age)}")
+    cv2.imwrite(warped_path(age, atlas), cv2.cvtColor(warped, cv2.COLOR_RGB2BGR))
+    print(f"[compare] {age} Ma {atlas} warp={method} ({len(ref_pts)} GCPs) "
+          f"-> {warped_path(age, atlas)}")
     return warped, valid
+
+
+def warp_floegel(age, meta):
+    """Warp the Floegel image onto the current GeoTIFF grid."""
+    return warp_atlas(age, meta, 'floegel')
 
 
 # ---------------------------------------------------------------------------
@@ -774,10 +891,11 @@ def class_area_pct(classes, mask):
     return out
 
 
-def save_metrics_csv(age, cm, metrics, ref_pct, flo_pct):
-    with open(metrics_path(age), 'w', newline='', encoding='utf-8') as f:
+def save_metrics_csv(age, cm, metrics, ref_pct, flo_pct, atlas='floegel'):
+    with open(metrics_path(age, atlas), 'w', newline='', encoding='utf-8') as f:
         w = csv.writer(f)
         w.writerow([f'Comparacao Floegel x GeoTIFF - {age} Ma'])
+        w.writerow(['Raster', os.path.basename(geotiff_path(age))])
         w.writerow([])
         w.writerow(['Matriz de confusao (linhas=GeoTIFF, colunas=Floegel)'])
         w.writerow([''] + [CLASS_NAMES[c] for c in CLASS_ORDER])
@@ -803,14 +921,14 @@ def save_metrics_csv(age, cm, metrics, ref_pct, flo_pct):
         w.writerow(['Acuracia global (%)', f"{metrics.get('overall_accuracy', 0) * 100:.2f}"])
         w.writerow(['Kappa de Cohen', f"{metrics.get('kappa', 0):.4f}"])
         w.writerow(['Pixels comparados', metrics.get('total_pixels', 0)])
-    print(f"[compare] metrics -> {metrics_path(age)}")
+    print(f"[compare] metrics -> {metrics_path(age, atlas)}")
 
 
 # ---------------------------------------------------------------------------
 # Report (PNG composite + HTML)
 # ---------------------------------------------------------------------------
 
-def save_class_composite(age, ref_classes, flo_classes, mask, cm):
+def save_class_composite(age, ref_classes, flo_classes, mask, cm, atlas='floegel'):
     """Save a PNG figure: reference classes | floegel classes | confusion matrix."""
     import matplotlib
     matplotlib.use('Agg')
@@ -852,16 +970,17 @@ def save_class_composite(age, ref_classes, flo_classes, mask, cm):
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     fig.tight_layout()
-    fig.savefig(classes_path(age), dpi=110)
+    fig.savefig(classes_path(age, atlas), dpi=110)
     plt.close(fig)
-    print(f"[compare] composite -> {classes_path(age)}")
+    print(f"[compare] composite -> {classes_path(age, atlas)}")
 
 
 def _pct(x):
     return f"{x:.2f}%"
 
 
-def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps):
+def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps,
+                     atlas='floegel'):
     pc = metrics.get('per_class', {})
 
     def data_uri(path):
@@ -886,12 +1005,14 @@ def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps):
         cells = ''.join(f"<td>{int(cm[i, j])}</td>" for j in range(3))
         cm_rows += f"<tr><th>{CLASS_NAMES[rc]}</th>{cells}</tr>"
     cm_header = ''.join(f"<th>{CLASS_NAMES[c]}</th>" for c in CLASS_ORDER)
+    raster_name = os.path.basename(geotiff_path(age))
+    atlas_label = 'Hay' if atlas == 'hay' else 'Floegel'
 
     html = f"""<!DOCTYPE html>
 <html lang="pt-br">
 <head>
 <meta charset="UTF-8">
-<title>Comparacao Floegel x GeoTIFF - {age} Ma</title>
+<title>Comparacao {atlas_label} x GeoTIFF - {age} Ma</title>
 <style>
   body {{ font-family: Arial, sans-serif; margin: 0; background: #ecf0f1; color: #2c3e50; }}
   header {{ background: #2c3e50; color: #fff; padding: 14px 20px; }}
@@ -913,7 +1034,7 @@ def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps):
 </style>
 </head>
 <body>
-<header><h1>Comparacao de similaridade - Floegel x GeoTIFF ({age} Ma)</h1></header>
+<header><h1>Comparacao de similaridade - {atlas_label} x GeoTIFF ({age} Ma)</h1></header>
 <div class="content">
   <div class="cards">
     <div class="card"><div class="big">{_pct(metrics.get('overall_accuracy', 0) * 100)}</div>
@@ -925,8 +1046,8 @@ def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps):
   </div>
 
   <div class="note">
-    <b>Metodo:</b> warp {warp_method} com {n_gcps} pontos de controle. O Floegel foi
-    deformado para a grade do GeoTIFF; oceano/simbolos/rotulos foram ignorados. O teto
+    <b>Raster:</b> {raster_name}. <b>Metodo:</b> warp {warp_method} com {n_gcps} pontos de controle. O {atlas_label} foi
+    deformado para a grade do GeoTIFF exibido no mapa; oceano/simbolos/rotulos foram ignorados. O teto
     de concordancia e limitado pelo descasamento real de linha de costa e projecao entre
     os dois mapas, alem da qualidade/numero dos pontos de controle.
   </div>
@@ -945,10 +1066,10 @@ def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps):
   </table>
 
   <h2>Mapas de classe e matriz</h2>
-  <img src="{data_uri(classes_path(age))}" alt="composite">
+  <img src="{data_uri(classes_path(age, atlas))}" alt="composite">
 
   <h2>Floegel deformado (validacao visual do alinhamento)</h2>
-  <img src="{data_uri(warped_path(age))}" alt="warped floegel">
+  <img src="{data_uri(warped_path(age, atlas))}" alt="warped {atlas}">
 
   <h2>Render de referencia usado</h2>
   <img src="{data_uri(reference_path(age))}" alt="reference render">
@@ -956,9 +1077,9 @@ def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps):
 </body>
 </html>"""
 
-    with open(report_path(age), 'w', encoding='utf-8') as f:
+    with open(report_path(age, atlas), 'w', encoding='utf-8') as f:
         f.write(html)
-    print(f"[compare] report -> {report_path(age)}")
+    print(f"[compare] report -> {report_path(age, atlas)}")
 
 
 def generate_comparison_index():
@@ -1011,9 +1132,45 @@ def cmd_render_reference(args):
         for name in available_geotiffs():
             print(f'                   disponivel: {name}')
         print('                   Gere-os com: python render_map.py --power 4.0 '
-              '--gradient-sharp 18.0 --kdtree --map ' + ' '.join(missing))
+              '--gradient-sharp 18.0 --kdtree --pdf')
 
     generate_gcp_picker()
+
+
+def score_atlas(age, atlas, prototypes):
+    """Score one published atlas against the class raster on the map."""
+    image = atlas_image_path(atlas, age)
+    if not os.path.isfile(image):
+        print(f'[compare] {atlas} {age} Ma: missing {_rel(image)}')
+        return False
+    if not os.path.isfile(geotiff_path(age)):
+        print(f'[compare] {atlas} {age} Ma: missing {_rel(geotiff_path(age))}')
+        return False
+    # Move control points while the old reference image still exists.
+    ensure_gcps_on_current_raster(age)
+    if reference_is_stale(age):
+        print(f'[compare] {age}: reference render is not the current raster, '
+              f'rebuilding from {_rel(geotiff_path(age))}')
+        render_reference(age)
+
+    ref_classes, meta = geotiff_classes(age)
+    warped_rgb, valid = warp_atlas(age, meta, atlas)
+    atlas_classes = classify_floegel(warped_rgb, prototypes, valid_mask=valid)
+    mask = atlas_classes > 0
+    cm = confusion_matrix(ref_classes, atlas_classes, mask)
+    metrics = compute_metrics(cm)
+    ref_pct = class_area_pct(ref_classes, mask)
+    flo_pct = class_area_pct(atlas_classes, mask)
+    gcps = load_gcps(age)
+    n_gcps = len(gcps[0]) if gcps else 0
+    warp_method = 'thin_plate_spline' if n_gcps >= 6 else 'homography'
+    save_metrics_csv(age, cm, metrics, ref_pct, flo_pct, atlas)
+    save_class_composite(age, ref_classes, atlas_classes, mask, cm, atlas)
+    save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps, atlas)
+    accuracy = metrics.get('overall_accuracy', 0) * 100
+    print(f"[compare] {atlas} {age} Ma  ->  similaridade geral {accuracy:.2f}%  "
+          f"kappa {metrics.get('kappa', 0):.3f}  raster {os.path.basename(geotiff_path(age))}")
+    return True
 
 
 def cmd_compare(args):
@@ -1023,48 +1180,32 @@ def cmd_compare(args):
         present = atlas_images_present('hay', ages)
         if not present:
             print('[compare] No Hay images in COMPARISON/inputs '
-                  '(expected {age}_hay.png). Hay was not scored.')
+                  '(expected {age}_hay.png). Hay was not scored. '
+                  'The scorer uses the class raster the map is showing.')
             return
         print('[compare] Hay images found for: ' + ', '.join(present))
-        print('[compare] Hay still needs its own control points. '
-              'This round does not invent them.')
+        print('[compare] gcp_<age>.json was picked on the Floegel scan. '
+              'Hay was not scored on those pixels.')
         return
     prototypes = extract_legend_prototypes(os.path.join(INPUT_DIR, 'legenda.png'))
     print(f"[compare] legend prototypes: "
           f"{[(rgb, CLASS_NAMES[c]) for rgb, c in prototypes]}")
+    print(f"[compare] reference raster suffix: {GEOTIFF_SUFFIX}")
 
+    failures = 0
+    scored = False
     for age in ages:
-        if reference_is_stale(age):
-            print(f'[compare] {age}: render de referencia ausente ou desatualizado, '
-                  f'regerando a partir de {_rel(geotiff_path(age))}...')
-            render_reference(age)
-
-        ref_classes, meta = geotiff_classes(age)
-        warped_rgb, valid = warp_floegel(age, meta)
-
-        flo_classes = classify_floegel(warped_rgb, prototypes, valid_mask=valid)
-
-        # Common mask: Floegel pixels that were classified as a climate zone.
-        mask = flo_classes > 0
-
-        cm = confusion_matrix(ref_classes, flo_classes, mask)
-        metrics = compute_metrics(cm)
-        ref_pct = class_area_pct(ref_classes, mask)
-        flo_pct = class_area_pct(flo_classes, mask)
-
-        gcps = load_gcps(age)
-        n_gcps = len(gcps[0]) if gcps else 0
-        warp_method = 'thin_plate_spline' if n_gcps >= 6 else 'homography'
-
-        save_metrics_csv(age, cm, metrics, ref_pct, flo_pct)
-        save_class_composite(age, ref_classes, flo_classes, mask, cm)
-        save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps)
-
-        acc = metrics.get('overall_accuracy', 0) * 100
-        print(f"[compare] {age} Ma  ->  similaridade geral {acc:.2f}%  "
-              f"kappa {metrics.get('kappa', 0):.3f}")
-
-    generate_comparison_index()
+        try:
+            if score_atlas(age, atlas, prototypes):
+                scored = True
+        except Exception as exc:
+            failures += 1
+            print(f'[compare] {atlas} {age} Ma failed: {exc}')
+    if scored and atlas == 'floegel':
+        generate_comparison_index()
+        generate_gcp_picker(refresh=False)
+    if failures:
+        raise SystemExit(1)
 
 
 def main():
