@@ -15,8 +15,9 @@ points, reconstructed coastlines, optional basin outlines, and GeoTIFF raster da
   the embedded image.
 - **Access**: Published HTML is encrypted with StatiCrypt. A direct URL shows the
   password page, not the map. The point files stay in local `GEOJSON/`.
-- **Add points**: `add-point.html` downloads one GeoJSON feature in the October
-  column pattern, without `Weight`.
+- **Add points**: `add-point.html` queues points in the browser and downloads
+  one GeoJSON FeatureCollection in the October column pattern, without `Weight`.
+  `Show_on_Ma` is copied from `TIME`. Nothing is written onto the published maps.
 
 ## Installation
 

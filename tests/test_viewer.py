@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
@@ -31,7 +32,7 @@ def test_viewer_chrome_and_first_load(page, base_url, maps):
     assert 'Paleoclimate' in page.title()
     assert page.locator('.brand-mark').inner_text().strip() == 'PCVS'
     assert page.locator('#ageBtn').is_visible()
-    assert page.locator('#ageRange').is_visible()
+    assert page.locator('#ageRange').count() == 0
     assert page.locator('#prevBtn').is_visible()
     assert page.locator('#nextBtn').is_visible()
     assert page.locator('#pdfBtn').is_visible()
@@ -97,34 +98,19 @@ def test_combo_arrow_keys_change_age(page, base_url, maps):
     assert current_viewer_age(page) == int(maps[0]['age'])
 
 
-def test_timeline_and_stepper_navigate_ages(page, base_url, maps):
+def test_stepper_navigates_ages_without_a_slider(page, base_url, maps):
     goto_viewer(page, base_url)
-    last_index = len(maps) - 1
-    slider = page.locator('#ageRange')
-    assert slider.get_attribute('min') == '0'
-    assert slider.get_attribute('max') == str(last_index)
-
-    slider.evaluate(
-        """(el, value) => {
-          el.value = String(value);
-          el.dispatchEvent(new Event('input', {bubbles: true}));
-        }""",
-        last_index,
-    )
-    assert page.locator('#ageBtnLabel').inner_text().strip() == maps[-1]['label']
-    slider.evaluate(
-        """(el) => el.dispatchEvent(new Event('change', {bubbles: true}))"""
-    )
-    wait_viewer_ready(page)
-    assert current_viewer_age(page) == int(maps[-1]['age'])
-
-    page.locator('#prevBtn').click()
-    wait_viewer_ready(page)
-    assert current_viewer_age(page) == int(maps[-2]['age'])
+    assert page.locator('#ageRange').count() == 0
+    assert page.get_by_text('Ancient', exact=True).count() == 0
+    assert page.get_by_text('Recent', exact=True).count() == 0
 
     page.locator('#nextBtn').click()
     wait_viewer_ready(page)
-    assert current_viewer_age(page) == int(maps[-1]['age'])
+    assert current_viewer_age(page) == int(maps[1]['age'])
+
+    page.locator('#prevBtn').click()
+    wait_viewer_ready(page)
+    assert current_viewer_age(page) == int(maps[0]['age'])
 
 
 def test_keyboard_arrows_and_hash_stay_in_sync(page, base_url, maps):
@@ -341,21 +327,49 @@ def test_viewer_asks_for_the_password_before_loading_a_map(browser, base_url):
         context.close()
 
 
+def _fill_required(page, latitude, longitude, time, climate):
+    page.locator('[name="Latitude"]').fill(latitude)
+    page.locator('[name="Longitude"]').fill(longitude)
+    page.locator('[name="TIME"]').select_option(time)
+    page.locator('[name="Climate_Cl"]').select_option(climate)
+    page.locator('[name="Country"]').fill('Brazil')
+    page.locator('[name="Basin_Sub_"]').fill('Test Basin')
+    page.locator('[name="Formation"]').fill('Test Formation')
+    page.locator('[name="PlateID"]').fill('201')
+    page.locator('[name="REF(Authors, Year)"]').fill('Author, 2020')
+
+
 def test_add_point_form_uses_the_table_without_weight(page, base_url):
     page.goto(f'{base_url}/add-point.html', wait_until='domcontentloaded')
+    page.evaluate("localStorage.removeItem('pcvs:added-points')")
+    page.goto(f'{base_url}/add-point.html', wait_until='domcontentloaded')
     assert page.locator('h1').inner_text() == 'Add points'
-    assert page.get_by_role('heading', name='Optional').is_visible()
+    assert page.get_by_role('heading', name='Required').is_visible()
+    assert page.get_by_text('All fields in this section are required.').is_visible()
+    assert page.get_by_role('heading', name='Optional Fields').is_visible()
+    assert 'quantos pontos' in page.locator('.lead').inner_text()
     labels = page.locator('form label').all_inner_texts()
     assert labels
     assert all('Weight' not in label for label in labels)
-    for hidden in ('FILE1', 'RECONFILE1', 'ID', 'ANCHOR'):
+    for hidden in ('FILE1', 'RECONFILE1', 'ID', 'ANCHOR', 'Show_on_Ma'):
         assert page.locator(f'[name="{hidden}"]').count() == 0
     assert page.locator('input[type="number"]').count() == 0
     assert page.locator('[name="Latitude"]').evaluate('el => el.type') == 'text'
+    assert '.' in page.locator('[name="Latitude"]').get_attribute('placeholder')
+    assert ',' not in page.locator('[name="Latitude"]').get_attribute('placeholder')
+    assert '.' in page.locator('[name="Longitude"]').get_attribute('placeholder')
     assert page.locator('[name="REF(Authors, Year)"]').count() == 1
     assert page.locator('[name="Paleoenvironment"]').count() == 1
     assert page.locator('[name="Dating evidence"]').count() == 1
     assert page.locator('[name="Lithology, structures, paleowind"]').count() == 1
+    assert page.locator('#essential [name="Group"]').count() == 0
+    assert page.locator('#optional [name="Group"]').count() == 1
+    assert page.locator('#optional [name="Member"]').count() == 1
+    assert page.locator('#optional [name="Well name/ outcrop"]').count() == 1
+    for name in ('Group', 'Member', 'Well name/ outcrop'):
+        assert page.locator(f'[name="{name}"]').evaluate('el => el.required') is False
+    for name in ('Latitude', 'Country', 'Basin_Sub_', 'Formation', 'PlateID', 'REF(Authors, Year)'):
+        assert page.locator(f'[name="{name}"]').evaluate('el => el.required') is True
     ages = page.locator('[name="TIME"] option').all_inner_texts()
     assert '65 Ma' in ages and '145 Ma' in ages
     climate = page.locator('[name="Climate_Cl"]')
@@ -367,21 +381,62 @@ def test_add_point_form_uses_the_table_without_weight(page, base_url):
     lat.fill('-10.5')
     lon.fill('-40.25')
     assert lat.bounding_box()['width'] < 200
-    page.locator('[name="TIME"]').select_option('100')
-    page.locator('[name="Climate_Cl"]').select_option('H')
+    assert page.locator('#pointCount').inner_text() == '0 points added'
+    assert page.locator('#downloadBtn').is_disabled()
+    page.locator('#addBtn').click()
+    assert page.locator('#pointCount').inner_text() == '0 points added'
+
+    _fill_required(page, '-10.5', '-40.25', '100', 'H')
+    page.locator('#addBtn').click()
+    assert page.locator('#pointCount').inner_text() == '1 point added'
+    assert page.locator('[name="Latitude"]').input_value() == ''
+    assert page.locator('[name="TIME"]').input_value() == ''
+    assert page.locator('[name="Climate_Cl"]').input_value() == ''
+    queued = json.loads(page.evaluate("localStorage.getItem('pcvs:added-points')"))
+    assert queued[0]['properties']['TIME'] == 100
+    assert queued[0]['properties']['Show_on_Ma'] == 100
+
+    page.goto(f'{base_url}/add-point.html', wait_until='domcontentloaded')
+    assert page.locator('#pointCount').inner_text() == '1 point added'
+
+    _fill_required(page, '5.5', '10.0', '110', 'D')
+    page.locator('#addBtn').click()
+    assert page.locator('#pointCount').inner_text() == '2 points added'
+    page.locator('#pointList button.remove').first.click()
+    assert page.locator('#pointCount').inner_text() == '1 point added'
+
+    _fill_required(page, '-10.5', '-40.25', '100', 'H')
+    page.locator('#addBtn').click()
+    assert page.locator('#pointCount').inner_text() == '2 points added'
+
     with page.expect_download() as download_info:
-        page.locator('button[type="submit"]').click()
+        page.locator('#downloadBtn').click()
     download = download_info.value
-    assert download.suggested_filename.startswith('point-')
+    assert download.suggested_filename.startswith('points-')
     assert download.suggested_filename.endswith('.geojson')
     text = open(download.path(), encoding='utf-8').read()
-    assert 'Weight' not in text
-    assert '"ANCHOR": 0' in text
-    assert '"ID": null' in text
-    assert '"TIME": 100' in text
-    assert '"Latitude": -10.5' in text
-    assert '"Longitude": -40.25' in text
-    assert '"Climate_Cl": "H"' in text
-    assert ('"RECONFILE1": "Zahirovic_etal_2022_OptimisedMantleRef_and_NNRMantleRef.rot"'
-            in text)
-    assert f'"FILE1": "{download.suggested_filename}"' in text
+    payload = json.loads(text)
+    assert payload['type'] == 'FeatureCollection'
+    assert len(payload['features']) == 2
+    by_time = {feature['properties']['TIME']: feature for feature in payload['features']}
+    assert by_time[100]['geometry']['coordinates'] == [-40.25, -10.5]
+    assert by_time[100]['properties']['Climate_Cl'] == 'H'
+    assert by_time[100]['properties']['Country'] == 'Brazil'
+    assert by_time[100]['properties']['PlateID'] == 201
+    assert by_time[110]['geometry']['coordinates'] == [10, 5.5]
+    assert by_time[110]['properties']['Climate_Cl'] == 'D'
+    for feature in payload['features']:
+        props = feature['properties']
+        assert 'Weight' not in props
+        assert props['ANCHOR'] == 0
+        assert props['ID'] is None
+        assert props['Show_on_Ma'] == props['TIME']
+        assert props['FILE1'] == download.suggested_filename
+        assert props['Group'] is None
+        assert props['Member'] is None
+        assert props['Well name/ outcrop'] is None
+        assert props['RECONFILE1'] == (
+            'Zahirovic_etal_2022_OptimisedMantleRef_and_NNRMantleRef.rot'
+        )
+    assert page.locator('#pointCount').inner_text() == '0 points added'
+    assert page.evaluate("localStorage.getItem('pcvs:added-points')") is None

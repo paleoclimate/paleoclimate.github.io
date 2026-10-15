@@ -246,7 +246,6 @@ def test_viewer_shell_has_expected_controls():
     html = read_html(INDEX_HTML)
     for token in (
         'id="ageCombo"',
-        'id="ageRange"',
         'id="prevBtn"',
         'id="nextBtn"',
         'id="pdfBtn"',
@@ -258,6 +257,8 @@ def test_viewer_shell_has_expected_controls():
         "STORAGE_KEY = 'pcvs:age'",
     ):
         assert token in html, f'Viewer is missing {token}'
+    assert 'id="ageRange"' not in html
+    assert 'timeline-hint' not in html
 
 
 def test_comparison_assets_exist_for_linked_ages():

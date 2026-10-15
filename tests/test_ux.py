@@ -27,7 +27,6 @@ def _header_controls(page):
         'combo': page.locator('#ageBtn'),
         'prev': page.locator('#prevBtn'),
         'next': page.locator('#nextBtn'),
-        'range': page.locator('#ageRange'),
         'pdf': page.locator('#pdfBtn'),
     }
 
@@ -65,8 +64,7 @@ def test_header_controls_do_not_overlap_on_desktop(page, base_url):
     pairs = (
         ('brand', 'combo'),
         ('combo', 'prev'),
-        ('prev', 'range'),
-        ('range', 'next'),
+        ('prev', 'next'),
         ('next', 'pdf'),
     )
     for left, right in pairs:
@@ -121,7 +119,7 @@ def test_focus_visible_and_aria_on_core_controls(page, base_url):
     assert rule, 'Viewer CSS is missing :focus-visible'
     assert page.locator('#ageBtn').get_attribute('aria-haspopup') == 'listbox'
     assert page.locator('#ageMenu').get_attribute('role') == 'listbox'
-    assert page.locator('#ageRange').get_attribute('aria-label')
+    assert page.locator('#ageRange').count() == 0
     assert page.locator('#prevBtn').get_attribute('aria-label')
     assert page.locator('#nextBtn').get_attribute('aria-label')
     assert page.locator('#toast').get_attribute('role') == 'status'
