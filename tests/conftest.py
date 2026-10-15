@@ -5,10 +5,9 @@ from __future__ import annotations
 import socket
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-
 import pytest
 
-from tests.helpers import REPO_ROOT
+from tests.helpers import REPO_ROOT, auth_init_script
 
 
 class _SilentHandler(SimpleHTTPRequestHandler):
@@ -105,6 +104,7 @@ def context(browser):
         locale='en-US',
         accept_downloads=True,
     )
+    ctx.add_init_script(auth_init_script())
     yield ctx
     ctx.close()
 
@@ -113,6 +113,18 @@ def context(browser):
 def page(context):
     page = context.new_page()
     page.set_default_timeout(20_000)
+    raw_goto = page.goto
+
+    def goto(url, *args, **kwargs):
+        result = raw_goto(url, *args, **kwargs)
+        page.wait_for_function(
+            """() => !document.getElementById('staticrypt-password')
+                  && !document.getElementById('staticrypt_loading')""",
+            timeout=120_000,
+        )
+        return result
+
+    page.goto = goto
     errors = []
 
     def on_page_error(exc):

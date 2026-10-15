@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from site_crypto import passphrase_hash, read_html
 INDEX_HTML = REPO_ROOT / 'index.html'
 KNN_DIR = REPO_ROOT / 'GENERATED_KNN_IDW_MAPS'
 IDW_DIR = REPO_ROOT / 'GENERATED_IDW_MAPS'
@@ -126,7 +131,7 @@ def load_maps_catalog(index_path: Path | None = None) -> list[dict]:
     path = index_path or INDEX_HTML
     if not path.is_file():
         raise FileNotFoundError(f'Viewer not found: {path}')
-    text = path.read_text(encoding='utf-8')
+    text = read_html(path)
     match = re.search(r'var MAPS = (\[.*?\]);', text, flags=re.S)
     if not match:
         raise ValueError('Could not parse MAPS from index.html')
@@ -190,7 +195,7 @@ def pdf_path_for(html_path: Path, scope: str) -> Path:
 
 
 def pdf_files_for(html_path: Path) -> dict[str, Path]:
-    return {scope: pdf_path_for(html_path, scope) for scope in ('full', 'raster')}
+    return {'raster': pdf_path_for(html_path, 'raster')}
 
 
 def is_valid_pdf(path: Path, min_bytes: int = 1000) -> bool:
@@ -290,7 +295,12 @@ def _clear_page_errors(page) -> None:
         errors.clear()
 
 
-def wait_viewer_ready(page, timeout: int = 60_000) -> None:
+def auth_init_script() -> str:
+    """Unlock StatiCrypt pages in this tab before their scripts run."""
+    return "sessionStorage.setItem('pcvs-staticrypt', '%s');" % passphrase_hash()
+
+
+def wait_viewer_ready(page, timeout: int = 120_000) -> None:
     """Wait until the iframe map has Leaflet, PCVS, and the PDF button enabled."""
     page.wait_for_function(
         """() => {
@@ -298,6 +308,9 @@ def wait_viewer_ready(page, timeout: int = 60_000) -> None:
           const pdf = document.getElementById('pdfBtn');
           const loader = document.getElementById('loader');
           if (!frame || !frame.contentWindow || !pdf || !loader) return false;
+          const doc = frame.contentDocument;
+          if (!doc || doc.getElementById('staticrypt-password')
+              || doc.getElementById('staticrypt_loading')) return false;
           const child = frame.contentWindow;
           return !!(child.L && child.PCVS && !pdf.disabled
                     && !loader.classList.contains('on'));
@@ -307,7 +320,7 @@ def wait_viewer_ready(page, timeout: int = 60_000) -> None:
     _clear_page_errors(page)
 
 
-def wait_leaflet_ready(page, timeout: int = 60_000) -> None:
+def wait_leaflet_ready(page, timeout: int = 120_000) -> None:
     """Wait until a standalone Folium map page is interactive."""
     page.wait_for_function(
         """() => {

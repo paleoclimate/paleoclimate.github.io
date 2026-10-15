@@ -10,6 +10,7 @@ from tests.helpers import (
     goto_viewer,
     load_maps_catalog,
     map_frame,
+    select_age_via_combo,
     wait_viewer_ready,
 )
 
@@ -25,11 +26,8 @@ def _header_controls(page):
     return {
         'brand': page.locator('.brand-mark'),
         'combo': page.locator('#ageBtn'),
-        'prev': page.locator('#prevBtn'),
-        'next': page.locator('#nextBtn'),
-        'range': page.locator('#ageRange'),
+        'add': page.locator('#addPointBtn'),
         'pdf': page.locator('#pdfBtn'),
-        'scope': page.locator('#scopeToggle'),
     }
 
 
@@ -65,29 +63,27 @@ def test_header_controls_do_not_overlap_on_desktop(page, base_url):
 
     pairs = (
         ('brand', 'combo'),
-        ('combo', 'prev'),
-        ('prev', 'range'),
-        ('range', 'next'),
-        ('pdf', 'scope'),
+        ('combo', 'add'),
+        ('add', 'pdf'),
     )
     for left, right in pairs:
         assert not boxes_overlap(boxes[left], boxes[right]), f'{left} overlaps {right}'
 
 
-def test_phone_layout_wraps_timeline_and_keeps_actions(page, base_url):
+def test_phone_layout_keeps_the_age_menu_and_actions(page, base_url):
     page.set_viewport_size({'width': 390, 'height': 844})
     goto_viewer(page, base_url)
     header = page.locator('header').bounding_box()
-    timeline = page.locator('.timeline').bounding_box()
+    menu = page.locator('#ageBtn').bounding_box()
     actions = page.locator('.header-actions').bounding_box()
-    assert header and timeline and actions
-    assert timeline['y'] >= header['y']
+    assert header and menu and actions
+    assert menu['y'] >= header['y']
     assert page.locator('#pdfBtn').is_enabled()
+    assert page.locator('#prevBtn').count() == 0
     maps = load_maps_catalog()
     if len(maps) < 2:
-        pytest.skip('Need at least two ages to exercise the stepper on a phone')
-    page.locator('#nextBtn').click()
-    wait_viewer_ready(page)
+        pytest.skip('Need at least two ages to change age on a phone')
+    select_age_via_combo(page, int(maps[1]['age']))
     assert current_viewer_age(page) == int(maps[1]['age'])
 
 
@@ -122,26 +118,21 @@ def test_focus_visible_and_aria_on_core_controls(page, base_url):
     assert rule, 'Viewer CSS is missing :focus-visible'
     assert page.locator('#ageBtn').get_attribute('aria-haspopup') == 'listbox'
     assert page.locator('#ageMenu').get_attribute('role') == 'listbox'
-    assert page.locator('#ageRange').get_attribute('aria-label')
-    assert page.locator('#prevBtn').get_attribute('aria-label')
-    assert page.locator('#nextBtn').get_attribute('aria-label')
+    assert page.locator('#ageRange').count() == 0
+    assert page.locator('#prevBtn').count() == 0
+    assert page.locator('#nextBtn').count() == 0
     assert page.locator('#toast').get_attribute('role') == 'status'
     assert page.locator('#mapFrame').get_attribute('title')
     assert outline['width'] is not None
 
 
-def test_disabled_stepper_at_ends(page, base_url):
+def test_menu_selects_either_end_of_the_catalog(page, base_url):
     maps = load_maps_catalog()
-    goto_viewer(page, base_url, age=int(maps[0]['age']))
-    assert page.locator('#prevBtn').is_disabled()
-    page.locator('#prevBtn').click(force=True)
-    page.wait_for_timeout(150)
+    goto_viewer(page, base_url, age=int(maps[-1]['age']))
+    select_age_via_combo(page, int(maps[0]['age']))
     assert current_viewer_age(page) == int(maps[0]['age'])
 
-    goto_viewer(page, base_url, age=int(maps[-1]['age']))
-    assert page.locator('#nextBtn').is_disabled()
-    page.locator('#nextBtn').click(force=True)
-    page.wait_for_timeout(150)
+    select_age_via_combo(page, int(maps[-1]['age']))
     assert current_viewer_age(page) == int(maps[-1]['age'])
 
 
@@ -151,8 +142,9 @@ def test_rapid_age_changes_settle_on_the_last_choice(page, base_url):
     if steps < 1:
         pytest.skip('Need at least two ages')
     goto_viewer(page, base_url, age=int(maps[0]['age']))
-    for _ in range(steps):
-        page.locator('#nextBtn').click()
+    for index in range(1, steps + 1):
+        page.locator('#ageBtn').click()
+        page.locator('#ageMenu .combo-opt').nth(index).click()
     wait_viewer_ready(page)
     assert current_viewer_age(page) == int(maps[steps]['age'])
     frame = map_frame(page)

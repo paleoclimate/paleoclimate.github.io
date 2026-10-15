@@ -18,6 +18,7 @@ from tests.helpers import (
     entry_for_age,
     idw_html_files,
     is_valid_pdf,
+    read_html,
     knn_html_files,
     load_maps_catalog,
     overlay_png_for,
@@ -27,6 +28,23 @@ from tests.helpers import (
 
 def test_viewer_exists():
     assert INDEX_HTML.is_file(), 'index.html is missing; run python render_map.py'
+
+
+def test_published_html_is_staticrypt_ciphertext():
+    """A direct read of a published page is the password shell, not the map."""
+    from site_crypto import is_encrypted
+
+    pages = [INDEX_HTML, REPO_ROOT / 'add-point.html']
+    maps = idw_html_files()
+    assert maps, 'No generated maps to inspect'
+    pages.append(maps[0])
+    for path in pages:
+        raw = path.read_text(encoding='utf-8')
+        assert is_encrypted(raw), path.name
+        assert 'leaflet-container' not in raw
+        assert 'staticrypt-password' in raw
+        plain = read_html(path)
+        assert not is_encrypted(plain)
 
 
 def test_maps_catalog_is_well_formed():
@@ -44,11 +62,10 @@ def test_maps_catalog_is_well_formed():
         assert entry['path'].endswith('.html')
         assert (REPO_ROOT / entry['path']).is_file(), f"Missing map {entry['path']}"
         assert isinstance(entry['pdf'], dict)
-        for scope in ('full', 'raster'):
-            href = entry['pdf'].get(scope)
-            if href:
-                assert (REPO_ROOT / href).is_file(), f'Missing PDF {href}'
-                assert href.endswith(f'_{scope}.pdf')
+        assert set(entry['pdf']) == {'raster'}, entry['pdf']
+        href = entry['pdf']['raster']
+        assert (REPO_ROOT / href).is_file(), f'Missing PDF {href}'
+        assert href.endswith('_raster.pdf')
 
 
 def _html_age(path):
@@ -145,7 +162,7 @@ def test_generated_html_embeds_map_chrome_and_export_api():
     )
     broken = []
     for path in html_files:
-        text = path.read_text(encoding='utf-8')
+        text = read_html(path)
         missing = [token for token in required if token not in text]
         if missing:
             broken.append(f'{path.name}: {missing}')
@@ -155,7 +172,7 @@ def test_generated_html_embeds_map_chrome_and_export_api():
 def test_layer_names_match_renderer_constants():
     import render_map as renderer
 
-    html = idw_html_files()[0].read_text(encoding='utf-8')
+    html = read_html(idw_html_files()[0])
     for name in (
         renderer.LAYER_RASTER,
         renderer.LAYER_COASTLINES,
@@ -189,7 +206,7 @@ def test_basin_outlines_layer_is_optional_and_matches_source():
         assert match, path.name
         base = match.group(1)
         has_file = (geojson / f'{base}{renderer.GEOJSON_BASINS_SUFFIX}').is_file()
-        text = path.read_text(encoding='utf-8')
+        text = read_html(path)
         has_layer = f'"{renderer.LAYER_BASINS}"' in text
         if has_file != has_layer:
             mismatches.append(
@@ -200,66 +217,48 @@ def test_basin_outlines_layer_is_optional_and_matches_source():
     )
 
 
-def test_paleozones_layer_is_optional_and_matches_source():
-    """Paleozones is a Folium overlay only when `{base}_paleozones.geojson` exists.
-
-    Stale generated HTML (from before this layer existed) will fail this check
-    until `render_map.py` is run again. That is expected; do not weaken the
-    assertion to match old maps.
-    """
+def test_paleozones_are_not_drawn():
+    """Paleozone files stay companions, and the layer is not on the map."""
     import render_map as renderer
 
     assert renderer.LAYER_PALEOZONES == 'Paleozones'
     assert renderer.LAYER_PALEOZONES not in LAYER_NAMES
 
-    geojson = REPO_ROOT / 'GEOJSON'
-    if not geojson.is_dir():
-        pytest.skip('GEOJSON/ is local and gitignored')
-
     html_files = idw_html_files()
     assert html_files, 'No generated maps to inspect'
-    mismatches = []
-    for path in html_files:
-        match = re.search(r'map_(\d+_ma)_', path.name)
-        assert match, path.name
-        base = match.group(1)
-        has_file = (geojson / f'{base}{renderer.GEOJSON_PALEOZONES_SUFFIX}').is_file()
-        text = path.read_text(encoding='utf-8')
-        has_layer = f'"{renderer.LAYER_PALEOZONES}"' in text
-        if has_file != has_layer:
-            mismatches.append(
-                f'{path.name}: paleozones file={has_file} layer={has_layer}'
-            )
-    assert not mismatches, 'Paleozones layer does not match source files:\n' + '\n'.join(
-        mismatches
-    )
+    present = [
+        path.name for path in html_files
+        if f'"{renderer.LAYER_PALEOZONES}"' in read_html(path)
+    ]
+    assert not present, 'Paleozones layer is still drawn:\n' + '\n'.join(present)
 
 
 def test_idw_maps_also_embed_export_api():
     files = idw_html_files()
     assert files, 'No IDW maps found'
     for path in files:
-        text = path.read_text(encoding='utf-8')
+        text = read_html(path)
         assert 'window.PCVS' in text, path.name
         assert 'leaflet-container' in text, path.name
 
 
 def test_viewer_shell_has_expected_controls():
-    html = INDEX_HTML.read_text(encoding='utf-8')
+    html = read_html(INDEX_HTML)
     for token in (
         'id="ageCombo"',
-        'id="ageRange"',
-        'id="prevBtn"',
-        'id="nextBtn"',
         'id="pdfBtn"',
-        'id="rasterOnly"',
         'id="comparisonBtn"',
+        'Add points',
         'id="mapFrame"',
         'id="loader"',
         'id="toast"',
         "STORAGE_KEY = 'pcvs:age'",
     ):
         assert token in html, f'Viewer is missing {token}'
+    assert 'id="ageRange"' not in html
+    assert 'id="prevBtn"' not in html
+    assert 'id="nextBtn"' not in html
+    assert 'timeline-hint' not in html
 
 
 def test_comparison_assets_exist_for_linked_ages():
@@ -342,10 +341,36 @@ def test_restore_lost_accents_repairs_basin_names():
         ('Neuqu?n', 'Neuquén'),
         ('Ca?ad?n Asfalto', 'Cañadón Asfalto'),
         ('Aur?s', 'Aurès'),
-        ('Santos', 'Santos'),
-        ('Potiguar', 'Potiguar'),
+        ('S? Mateus', 'São Mateus'),
+        ('Alc?tara', 'Alcântara'),
+        ('Alter do Ch?', 'Alter do Chão'),
+        ('Tr? Barras', 'Três Barras'),
+        ('Algod?s', 'Algodões'),
+        ('Gon?lves', 'Gonçalves'),
+        ('C?doba', 'Córdoba'),
+        ('A? El Guettar', 'Aïn El Guettar'),
+        ('A?', 'Açu'),
+        ('Embor?S? Jos?N/A', 'Emboré/São José'),
+        ('109 ?18 Ma', '109 ± 18 Ma'),
+        ('SAG(?) Sequence', 'SAG(?) Sequence'),
+        ('Vivian Formation?', 'Vivian Formation?'),
     ):
         assert renderer.restore_lost_accents(broken) == fixed
+
+
+def test_generated_popups_name_the_reference_and_repaired_places():
+    files = idw_html_files()
+    assert files, 'No generated maps to inspect'
+    forbidden = ('Alc?tara', 'S? Mateus', 'Alter do Ch?', 'Tr? Barras', 'Gon?lves')
+    broken = []
+    for path in files:
+        text = read_html(path)
+        if '<dt>Reference</dt>' not in text or 'pcvs-more' not in text or 'Data points' not in text:
+            broken.append(f'{path.name}: popup or color stats was not regenerated')
+        for fragment in forbidden:
+            if fragment in text:
+                broken.append(f'{path.name} still has {fragment}')
+    assert not broken, '\n'.join(broken)
 
 
 def test_generated_maps_keep_basin_accents():
@@ -354,7 +379,7 @@ def test_generated_maps_keep_basin_accents():
     seen = set()
     broken = []
     for path in files:
-        basins = embedded_basins(path.read_text(encoding='utf-8'))
+        basins = embedded_basins(read_html(path))
         seen.update(basins)
         bad = [name for name in basins if '?' in name]
         if bad:
@@ -392,24 +417,25 @@ def test_every_html_and_pdf_map_was_generated():
     assert not missing, 'Maps were not generated successfully:\n' + '\n'.join(missing)
 
 
-def test_export_api_keeps_full_map_points_as_vectors():
+def test_export_api_draws_the_raster_extent_as_vectors():
     source = (REPO_ROOT / 'render_map.py').read_text(encoding='utf-8')
     assert 'composeVectorPdf' in source
     assert 'doc.circle' in source
-    assert 'composeBitmapPdf' in source
-    assert "scope === 'raster'" in source
+    assert 'composeBitmapPdf' not in source
+    assert 'htmlToImage.toCanvas' not in source
+    assert "var scope = 'raster'" in source
     assert 'pcvs-exporting path.pcvs-point' in source
     assert 'filter: none !important' in source
-    assert 'htmlToImage.toCanvas(map.getContainer()' in source
     assert 'composeVectorPdf(scope, size)' in source
+    assert 'doc.clip' in source
 
 
-def test_full_pdfs_keep_data_points_as_vectors():
+def test_raster_pdfs_keep_data_points_as_vectors():
     files = idw_html_files()
     assert files, 'No generated maps; run python render_map.py --pdf'
     broken = []
     for html in files:
-        pdf = pdf_files_for(html)['full']
+        pdf = pdf_files_for(html)['raster']
         try:
             assert_pdf_points_are_vector(pdf)
         except AssertionError as exc:
@@ -429,7 +455,7 @@ def test_html_markers_use_the_published_point_size():
     outer = renderer.POINT_OUTER_PX
     broken = []
     for path in files:
-        text = path.read_text(encoding='utf-8')
+        text = read_html(path)
         if f'"radius": {radius}' not in text:
             broken.append(f'{path.name}: CircleMarker radius is not {radius}')
         if f'"weight": {weight}' not in text:
