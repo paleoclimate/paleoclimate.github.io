@@ -10,10 +10,7 @@ _Avoid_: year, time slice
 
 **Age menu**:
 The control that opens one reconstruction age.
-_Avoid_: age slider, volume bar, timeline
-
-**Age stepper**:
-The pair of controls that move to the next younger or older reconstruction age.
+_Avoid_: age slider, age stepper, younger button, older button, volume bar, timeline
 
 **Added point**:
 A point queued on the add-points screen until the author downloads the collection.

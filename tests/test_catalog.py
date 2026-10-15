@@ -246,8 +246,6 @@ def test_viewer_shell_has_expected_controls():
     html = read_html(INDEX_HTML)
     for token in (
         'id="ageCombo"',
-        'id="prevBtn"',
-        'id="nextBtn"',
         'id="pdfBtn"',
         'id="comparisonBtn"',
         'Add points',
@@ -258,6 +256,8 @@ def test_viewer_shell_has_expected_controls():
     ):
         assert token in html, f'Viewer is missing {token}'
     assert 'id="ageRange"' not in html
+    assert 'id="prevBtn"' not in html
+    assert 'id="nextBtn"' not in html
     assert 'timeline-hint' not in html
 
 

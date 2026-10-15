@@ -33,8 +33,8 @@ def test_viewer_chrome_and_first_load(page, base_url, maps):
     assert page.locator('.brand-mark').inner_text().strip() == 'PCVS'
     assert page.locator('#ageBtn').is_visible()
     assert page.locator('#ageRange').count() == 0
-    assert page.locator('#prevBtn').is_visible()
-    assert page.locator('#nextBtn').is_visible()
+    assert page.locator('#prevBtn').count() == 0
+    assert page.locator('#nextBtn').count() == 0
     assert page.locator('#pdfBtn').is_visible()
     assert page.locator('#pdfBtn').is_enabled()
     assert page.locator('#rasterOnly').count() == 0
@@ -46,8 +46,6 @@ def test_viewer_chrome_and_first_load(page, base_url, maps):
     assert page.locator('#ctxAge').inner_text().strip() == f'{youngest} Ma'
     assert 'KNN' in page.locator('#ctxSub').inner_text()
     assert 'IDW' in page.locator('#ctxSub').inner_text()
-    assert page.locator('#prevBtn').is_disabled()
-    assert page.locator('#nextBtn').is_enabled()
     assert page.locator('#ageBtn').get_attribute('aria-expanded') == 'false'
     assert page.locator('#mapFrame').get_attribute('title')
 
@@ -67,8 +65,7 @@ def test_combo_lists_every_age_and_selects(page, base_url, maps):
     select_age_via_combo(page, target)
     assert not page.locator('#ageCombo').evaluate("el => el.classList.contains('open')")
     assert current_viewer_age(page) == target
-    assert page.locator('#nextBtn').is_disabled()
-    assert page.locator('#prevBtn').is_enabled()
+    assert page.evaluate('location.hash') == f'#age={target}'
     assert page.locator('#ctxAge').inner_text().strip() == f'{target} Ma'
     frame = map_frame(page)
     assert f'map_{target}_ma' in frame.url
@@ -98,35 +95,29 @@ def test_combo_arrow_keys_change_age(page, base_url, maps):
     assert current_viewer_age(page) == int(maps[0]['age'])
 
 
-def test_stepper_navigates_ages_without_a_slider(page, base_url, maps):
+def test_age_changes_only_through_the_menu(page, base_url, maps):
     goto_viewer(page, base_url)
     assert page.locator('#ageRange').count() == 0
+    assert page.locator('#prevBtn').count() == 0
+    assert page.locator('#nextBtn').count() == 0
     assert page.get_by_text('Ancient', exact=True).count() == 0
     assert page.get_by_text('Recent', exact=True).count() == 0
 
-    page.locator('#nextBtn').click()
-    wait_viewer_ready(page)
+    select_age_via_combo(page, int(maps[1]['age']))
     assert current_viewer_age(page) == int(maps[1]['age'])
 
-    page.locator('#prevBtn').click()
-    wait_viewer_ready(page)
-    assert current_viewer_age(page) == int(maps[0]['age'])
 
-
-def test_keyboard_arrows_and_hash_stay_in_sync(page, base_url, maps):
+def test_arrow_keys_do_not_change_age(page, base_url, maps):
     goto_viewer(page, base_url, age=int(maps[1]['age']))
     page.evaluate('document.activeElement && document.activeElement.blur()')
     page.keyboard.press('ArrowRight')
-    wait_viewer_ready(page)
-    assert current_viewer_age(page) == int(maps[2]['age'])
-    assert page.evaluate('location.hash') == f"#age={maps[2]['age']}"
-
     page.keyboard.press('ArrowLeft')
-    wait_viewer_ready(page)
+    page.wait_for_timeout(200)
     assert current_viewer_age(page) == int(maps[1]['age'])
+    assert page.evaluate('location.hash') == f"#age={maps[1]['age']}"
 
 
-def test_keyboard_ignored_while_focus_is_on_an_input(page, base_url, maps):
+def test_export_shortcut_ignored_while_focus_is_on_an_input(page, base_url, maps):
     goto_viewer(page, base_url, age=int(maps[1]['age']))
     page.evaluate(
         """() => {
@@ -136,8 +127,9 @@ def test_keyboard_ignored_while_focus_is_on_an_input(page, base_url, maps):
         }"""
     )
     page.locator('#guardProbe').focus()
-    page.keyboard.press('ArrowRight')
-    page.wait_for_timeout(200)
+    page.keyboard.press('p')
+    page.wait_for_timeout(300)
+    assert not page.locator('#toast').evaluate("el => el.classList.contains('on')")
     assert current_viewer_age(page) == int(maps[1]['age'])
 
 
@@ -214,7 +206,8 @@ def test_comparison_button_only_for_supported_ages(page, base_url, maps):
 
 def test_loader_appears_while_switching_maps(page, base_url, maps):
     goto_viewer(page, base_url, age=int(maps[0]['age']))
-    page.locator('#nextBtn').click()
+    page.locator('#ageBtn').click()
+    page.locator('#ageMenu .combo-opt').nth(1).click()
     page.wait_for_function(
         "() => document.getElementById('loader').classList.contains('on') "
         "|| !document.getElementById('pdfBtn').disabled "
@@ -347,7 +340,10 @@ def test_add_point_form_uses_the_table_without_weight(page, base_url):
     assert page.get_by_role('heading', name='Required').is_visible()
     assert page.get_by_text('All fields in this section are required.').is_visible()
     assert page.get_by_role('heading', name='Optional Fields').is_visible()
-    assert 'quantos pontos' in page.locator('.lead').inner_text()
+    assert page.locator('.lead').inner_text() == (
+        'Add as many points as you wish, then export the standardized GeoJSON. '
+        'No data is updated on the current maps.'
+    )
     labels = page.locator('form label').all_inner_texts()
     assert labels
     assert all('Weight' not in label for label in labels)
