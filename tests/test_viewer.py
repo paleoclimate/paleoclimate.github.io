@@ -9,9 +9,9 @@ import pytest
 from tests.helpers import (
     COMPARISON_AGES,
     STORAGE_KEY,
-    REPO_ROOT,
     catalog_ages,
     current_viewer_age,
+    auth_init_script,
     goto_viewer,
     load_maps_catalog,
     map_frame,
@@ -167,11 +167,7 @@ def test_hash_selects_age_and_invalid_hash_falls_back(page, browser, base_url, m
 
     # Fresh profile, no stored age: a bad hash opens the youngest map.
     isolated = browser.new_context(viewport={'width': 1440, 'height': 900})
-    gate = (REPO_ROOT / 'viewer_gate.js').read_text(encoding='utf-8')
-    digest = re.search(r'PCVS_PASSWORD_SHA256 = "([0-9a-f]+)"', gate).group(1)
-    isolated.add_init_script(
-        "sessionStorage.setItem('pcvs-auth', '%s');" % digest
-    )
+    isolated.add_init_script(auth_init_script())
     blank = isolated.new_page()
     try:
         blank.goto(f'{base_url}/index.html#age=99999', wait_until='domcontentloaded')
@@ -318,13 +314,27 @@ def test_viewer_asks_for_the_password_before_loading_a_map(browser, base_url):
     page = context.new_page()
     try:
         page.goto(f'{base_url}/index.html', wait_until='domcontentloaded')
-        page.locator('#pcvs-lock').wait_for()
-        assert not page.locator('#mapFrame').get_attribute('src')
-        page.locator('#pcvs-password').fill('Paleoclima-2026-entrega')
-        page.locator('#pcvs-lock button').click()
+        password = page.locator('#staticrypt-password')
+        password.wait_for()
+        assert page.locator('#mapFrame').count() == 0
+        box = password.bounding_box()
+        assert box and box['width'] < 260
+        password.fill('not-the-password')
+        page.locator('.staticrypt-decrypt-button').click()
         page.wait_for_function(
-            "() => (document.getElementById('mapFrame').getAttribute('src') || '')"
-            ".includes('map_')"
+            "() => (document.getElementById('staticrypt-error').textContent || '')"
+            ".includes('Wrong password')",
+            timeout=60_000,
+        )
+        page.locator('.staticrypt-toggle-password-visibility').click()
+        assert password.evaluate('el => el.type') == 'text'
+        password.fill('Paleoclima-2026-entrega')
+        page.locator('.staticrypt-decrypt-button').click()
+        page.wait_for_function(
+            "() => (document.getElementById('mapFrame') && "
+            "document.getElementById('mapFrame').getAttribute('src') || '')"
+            ".includes('map_')",
+            timeout=120_000,
         )
     finally:
         page.close()
@@ -333,21 +343,45 @@ def test_viewer_asks_for_the_password_before_loading_a_map(browser, base_url):
 
 def test_add_point_form_uses_the_table_without_weight(page, base_url):
     page.goto(f'{base_url}/add-point.html', wait_until='domcontentloaded')
+    assert page.locator('h1').inner_text() == 'Add points'
+    assert page.get_by_role('heading', name='Optional').is_visible()
     labels = page.locator('form label').all_inner_texts()
     assert labels
     assert all('Weight' not in label for label in labels)
+    for hidden in ('FILE1', 'RECONFILE1', 'ID', 'ANCHOR'):
+        assert page.locator(f'[name="{hidden}"]').count() == 0
+    assert page.locator('input[type="number"]').count() == 0
+    assert page.locator('[name="Latitude"]').evaluate('el => el.type') == 'text'
     assert page.locator('[name="REF(Authors, Year)"]').count() == 1
     assert page.locator('[name="Paleoenvironment"]').count() == 1
     assert page.locator('[name="Dating evidence"]').count() == 1
     assert page.locator('[name="Lithology, structures, paleowind"]').count() == 1
-    page.locator('[name="Latitude"]').fill('-10')
-    page.locator('[name="Longitude"]').fill('-40')
-    page.locator('[name="ID"]').fill('9')
+    ages = page.locator('[name="TIME"] option').all_inner_texts()
+    assert '65 Ma' in ages and '145 Ma' in ages
+    climate = page.locator('[name="Climate_Cl"]')
+    assert climate.locator('option:checked').get_attribute('disabled') is not None
+    page.locator('[name="Latitude"]').fill('10,5')
+    assert page.locator('[name="Latitude"]').evaluate('el => el.checkValidity()') is False
+    lat = page.locator('[name="Latitude"]')
+    lon = page.locator('[name="Longitude"]')
+    lat.fill('-10.5')
+    lon.fill('-40.25')
+    assert lat.bounding_box()['width'] < 200
+    page.locator('[name="TIME"]').select_option('100')
     page.locator('[name="Climate_Cl"]').select_option('H')
     with page.expect_download() as download_info:
         page.locator('button[type="submit"]').click()
-    payload = download_info.value.path()
-    text = open(payload, encoding='utf-8').read()
+    download = download_info.value
+    assert download.suggested_filename.startswith('point-')
+    assert download.suggested_filename.endswith('.geojson')
+    text = open(download.path(), encoding='utf-8').read()
     assert 'Weight' not in text
-    assert '"ID": "9"' in text
+    assert '"ANCHOR": 0' in text
+    assert '"ID": null' in text
+    assert '"TIME": 100' in text
+    assert '"Latitude": -10.5' in text
+    assert '"Longitude": -40.25' in text
     assert '"Climate_Cl": "H"' in text
+    assert ('"RECONFILE1": "Zahirovic_etal_2022_OptimisedMantleRef_and_NNRMantleRef.rot"'
+            in text)
+    assert f'"FILE1": "{download.suggested_filename}"' in text

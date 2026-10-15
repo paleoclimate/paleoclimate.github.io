@@ -13,9 +13,9 @@ points, reconstructed coastlines, optional basin outlines, and GeoTIFF raster da
 - **PDF Export**: One vector PDF of the raster extent. Coastlines, basin outlines,
   data points and graticule labels stay editable paths. The climate surface stays
   the embedded image.
-- **Access**: The viewer asks for the team password before it loads a map. The point
-  files stay in local `GEOJSON/` and are not part of the site.
-- **Add a point**: `add-point.html` downloads one GeoJSON feature in the October
+- **Access**: Published HTML is encrypted with StatiCrypt. A direct URL shows the
+  password page, not the map. The point files stay in local `GEOJSON/`.
+- **Add points**: `add-point.html` downloads one GeoJSON feature in the October
   column pattern, without `Weight`.
 
 ## Installation
@@ -43,8 +43,10 @@ python render_map.py --power 4.0 --condensation-radius 0.5 --gradient-sharp 18.0
 ```
 
 This writes GeoTIFFs, one interactive HTML map per age, a condensation audit
-in `CONDENSED/`, and regenerates `index.html`. `--gradient-sharp` is accepted
-and ignored: the raster is class codes, not a sharpened ramp.
+in `CONDENSED/`, and regenerates `index.html`. It then encrypts the published
+HTML with StatiCrypt (`npm install` once, so the `staticrypt` CLI is present).
+`--gradient-sharp` is accepted and ignored: the raster is class codes, not a
+sharpened ramp.
 
 ## Verify after changes
 

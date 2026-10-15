@@ -118,7 +118,7 @@ python compare_floegel.py compare --age 115
 |---------|-------------|
 | `python compare_floegel.py pick-gcps` | Regenerar só o `gcp_picker.html` (por exemplo, após trocar os PNGs do Floegel em `inputs/`) |
 | `python compare_floegel.py pick-gcps --no-refresh` | Regenerar o HTML sem re-renderizar a partir do GeoTIFF (só se você tem certeza de que o render já está atualizado) |
-| `python compare_floegel.py --suffix <sufixo> ...` | Usar GeoTIFFs com outro sufixo de parâmetros (default: `knn_idw_power4.0_gradient_sharp18.0_kdtree`) |
+| `python compare_floegel.py --suffix <sufixo> ...` | Usar GeoTIFFs com outro sufixo de parâmetros (default: `knn_idw_power4.0_smooth2.0_class-thirds_kdtree`, o raster que o mapa exibe) |
 
 ---
 

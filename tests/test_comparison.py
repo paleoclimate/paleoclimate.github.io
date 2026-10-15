@@ -197,3 +197,28 @@ def test_hay_images_are_absent_and_floegel_images_are_present():
 
     assert comparison.atlas_images_present('hay') == []
     assert set(comparison.atlas_images_present('floegel')) == {'105', '115'}
+
+
+def test_comparison_uses_the_raster_shown_on_the_map():
+    """The scored grid is the overlay the viewer paints, not an older render."""
+    from PIL import Image
+
+    import compare_floegel as comparison
+
+    for age in COMPARISON_AGES:
+        overlay = next(
+            (COMPARISON_DIR.parent / 'GENERATED_IDW_MAPS').glob(
+                f'raster_overlay_{age}_ma_*.png'
+            )
+        )
+        shown = Image.open(overlay)
+        reference = Image.open(comparison.reference_path(str(age)))
+        _classes, meta = comparison.geotiff_classes(str(age))
+        assert (meta['width'], meta['height']) == shown.size
+        assert reference.size == shown.size
+        assert 'class-thirds' in comparison.GEOTIFF_SUFFIX
+        metrics = (COMPARISON_DIR / f'metrics_{age}.csv').read_text(encoding='utf-8')
+        assert 'class-thirds' in metrics
+        gcp = json.loads((COMPARISON_DIR / f'gcp_{age}.json').read_text(encoding='utf-8'))
+        assert gcp.get('width') == shown.size[0]
+        assert gcp.get('height') == shown.size[1]

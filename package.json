@@ -1,0 +1,8 @@
+{
+  "name": "paleoclimate-site",
+  "private": true,
+  "description": "StatiCrypt publish step for the paleoclimate atlas.",
+  "dependencies": {
+    "staticrypt": "3.5.4"
+  }
+}
