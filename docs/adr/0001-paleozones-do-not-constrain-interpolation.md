@@ -4,4 +4,4 @@ Paleozones share the Humid / Semi-arid / Dry taxonomy with data points, so it is
 
 **Considered options:** (1) overlay only; (2) hard-fill the raster from polygons; (3) seed or mask the interpolator with polygon class. (2) and (3) would replace the point interpolator over most of the map, hide point–belt disagreement, and make 115 Ma and 145 Ma (no Paleozone file) a different method from the other ages. Overlay keeps Color stats and the Floegel comparison measuring interpolation, and lets both evidence types be toggled independently.
 
-The overlay half of this decision is superseded by `docs/adr/0020-paleozones-are-not-drawn.md`. Paleozones still do not constrain interpolation.
+The overlay half of this decision is superseded by `docs/adr/0020-paleozones-are-not-drawn.md`. The polygons still do not mask or hard-fill a cell. The 5° conceptual lattice is sampled from these files; see `docs/adr/0039-paleozone-lattice-anchors-interpolation.md`.
