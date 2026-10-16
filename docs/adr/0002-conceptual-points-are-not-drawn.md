@@ -5,3 +5,5 @@ Point files mix data points with conceptual points: climate-class locations whos
 **Considered options:** (1) leave them out of the drawing only; (2) also drop them from interpolation. (2) would republish the climate surface at every reconstruction age except 145 Ma and change the Floegel comparison. (1) keeps the published raster and Color stats as an interpolation of every climate-class location in the point file, including the conceptual grid.
 
 **Consequences:** Null and N/A are the same absence of identity. 70 Ma and 75 Ma store null; the other ages store N/A. A colored patch with no marker is expected where only a conceptual point anchors the interpolator.
+
+The ID test above is no longer the whole rule. A blank ID on a row that names a country, a basin, or a formation is a data point. See `docs/adr/0040-blank-id-with-a-locality-is-a-data-point.md`.

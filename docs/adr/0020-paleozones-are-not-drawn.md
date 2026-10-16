@@ -4,4 +4,4 @@ Paleozone polygons were an optional overlay on top of the raster. They covered m
 
 **Considered options:** (1) stop drawing the layer; (2) keep it and leave the checkbox off. (2) leaves the belts one click away, which is the layer the team said can disappear.
 
-**Consequences:** Supersedes the overlay in `docs/adr/0001-paleozones-do-not-constrain-interpolation.md` and the hover rule in `docs/adr/0017-paleozone-hover-shows-nothing.md`. Interpolation is unchanged.
+**Consequences:** Supersedes the overlay in `docs/adr/0001-paleozones-do-not-constrain-interpolation.md` and the hover rule in `docs/adr/0017-paleozone-hover-shows-nothing.md`. The layer stays undrawn. Sampling the file onto the conceptual lattice is `docs/adr/0039-paleozone-lattice-anchors-interpolation.md`.

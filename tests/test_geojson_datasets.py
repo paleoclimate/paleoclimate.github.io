@@ -51,12 +51,17 @@ def test_conceptual_points_drop_from_drawing_and_stay_in_interpolation():
              'geometry': {'type': 'Point', 'coordinates': [5.0, 6.0]}},
             {'type': 'Feature', 'properties': {'ID': ' n/a ', 'Climate_Cl': 'H'},
              'geometry': {'type': 'Point', 'coordinates': [7.0, 8.0]}},
+            {'type': 'Feature', 'properties': {
+                'ID': None, 'Climate_Cl': 'S', 'Country': 'Argentina',
+                'Basin_Sub_': 'Neuquen', 'Formation': 'Picun Leufu',
+            }, 'geometry': {'type': 'Point', 'coordinates': [9.0, 10.0]}},
         ],
     }
     drawn = renderer.drawable_point_features(points)
-    assert [feature['properties']['ID'] for feature in drawn] == ['3']
+    assert [feature['properties']['ID'] for feature in drawn] == ['3', None]
+    assert drawn[1]['properties']['Formation'] == 'Picun Leufu'
     _, values = renderer.extract_points_and_values(points)
-    assert list(values) == [3.0, 2.0, 1.0, 3.0]
+    assert list(values) == [3.0, 2.0, 1.0, 3.0, 2.0]
 
 
 def test_paleozone_labels_normalize_humid_typo():
@@ -92,9 +97,13 @@ def test_real_point_count_skips_conceptual_points():
              'geometry': {'type': 'Point', 'coordinates': [3.0, 4.0]}},
             {'type': 'Feature', 'properties': {'ID': 'N/A', 'Climate_Cl': 'D'},
              'geometry': {'type': 'Point', 'coordinates': [5.0, 6.0]}},
+            {'type': 'Feature', 'properties': {
+                'ID': None, 'Climate_Cl': 'H', 'Country': 'Argentina',
+                'Formation': 'Vaca Muerta',
+            }, 'geometry': {'type': 'Point', 'coordinates': [9.0, 10.0]}},
         ],
     }
-    assert renderer.real_point_count(points) == 1
+    assert renderer.real_point_count(points) == 2
 
 
 def test_point_popup_shows_the_reference_and_tucks_the_notes(tmp_path):
@@ -121,7 +130,7 @@ def test_point_popup_shows_the_reference_and_tucks_the_notes(tmp_path):
             },
             {
                 'type': 'Feature',
-                'properties': {'ID': 'N/A', 'Climate_Cl': 'D', 'Formation': 'Grid'},
+                'properties': {'ID': 'N/A', 'Climate_Cl': 'D'},
                 'geometry': {'type': 'Point', 'coordinates': [1, 1]},
             },
         ],
@@ -169,7 +178,6 @@ def test_point_popup_shows_the_reference_and_tucks_the_notes(tmp_path):
     assert 'Data points' in html_text
     assert '<strong>1</strong>' in html_text
     assert '"Paleozones"' not in html_text
-    assert 'Grid' not in html_text
 
 
 def test_loaded_point_names_used_on_click_keep_their_accents():
@@ -249,3 +257,68 @@ def test_basin_outlines_are_a_stroke_and_keep_only_the_name():
     feature = displayed['features'][0]
     assert feature['properties'] == {'BASIN_NAME': 'Jatoba'}
     assert feature['geometry']['type'] == 'Polygon'
+
+
+def test_paleozone_lattice_samples_five_degree_nodes_and_prefers_dry():
+    paleozones = {
+        'type': 'FeatureCollection',
+        'features': [
+            {
+                'type': 'Feature',
+                'properties': {'Paleozona': 'Semi-arid'},
+                'geometry': {'type': 'Polygon', 'coordinates': [[
+                    [-2.5, -2.5], [7.5, -2.5], [7.5, 2.5], [-2.5, 2.5], [-2.5, -2.5],
+                ]]},
+            },
+            {
+                'type': 'Feature',
+                'properties': {'Paleozona': 'Dry'},
+                'geometry': {'type': 'Polygon', 'coordinates': [[
+                    [-2.5, -2.5], [2.5, -2.5], [2.5, 2.5], [-2.5, 2.5], [-2.5, -2.5],
+                ]]},
+            },
+        ],
+    }
+    anchors = renderer.conceptual_anchors_from_paleozones(paleozones)
+    by_coord = {
+        tuple(feature['geometry']['coordinates']): feature['properties']['Climate_Cl']
+        for feature in anchors
+    }
+    assert by_coord[(0.0, 0.0)] == 'D'
+    assert by_coord[(5.0, 0.0)] == 'S'
+    assert (10.0, 0.0) not in by_coord
+    assert all(renderer.is_conceptual_point(feature['properties']) for feature in anchors)
+    merged = renderer.with_conceptual_anchors(
+        {'type': 'FeatureCollection', 'features': [{
+            'type': 'Feature',
+            'properties': {'ID': '1', 'Climate_Cl': 'H', 'Country': 'Brazil'},
+            'geometry': {'type': 'Point', 'coordinates': [0.1, 0.1]},
+        }]},
+        anchors,
+    )
+    _interpolator, condensed, _overruled = renderer.condense_proxy_points(merged)
+    assert len(condensed['features']) == 1
+    assert len(_interpolator['features']) == 1 + len(anchors)
+
+
+def test_recovered_conceptual_file_is_used_when_the_age_has_no_paleozones(tmp_path):
+    _write_geojson(tmp_path / '115_ma.geojson', [{
+        'type': 'Feature',
+        'properties': {'ID': 'N/A', 'Climate_Cl': 'H'},
+        'geometry': {'type': 'Point', 'coordinates': [10.0, -20.0]},
+    }])
+    anchors = renderer.conceptual_anchors_from_file('115_ma', directory=str(tmp_path))
+    assert len(anchors) == 1
+    assert anchors[0]['properties']['Climate_Cl'] == 'H'
+    assert renderer.conceptual_anchors_from_file('145_ma', directory=str(tmp_path)) == []
+
+
+def test_115_ma_recovered_lattice_is_conceptual_and_on_the_grid():
+    path = Path(__file__).resolve().parents[1] / 'conceptual' / '115_ma.geojson'
+    data = json.loads(path.read_text(encoding='utf-8'))
+    assert len(data['features']) == 206
+    for feature in data['features']:
+        assert renderer.is_conceptual_point(feature['properties'])
+        lon, lat = feature['geometry']['coordinates']
+        assert lon % 5 == 0 and lat % 5 == 0
+        assert feature['properties']['Climate_Cl'] in {'D', 'S', 'H'}

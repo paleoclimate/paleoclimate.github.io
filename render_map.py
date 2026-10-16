@@ -34,6 +34,7 @@ from scipy.spatial.distance import cdist
 from scipy.spatial import cKDTree
 from PIL import Image
 import cv2
+from matplotlib.path import Path as MplPath
 
 try:
     import resource
@@ -1301,18 +1302,110 @@ def climate_marker_icon_html(climates_tied, color_map, radius_px=POINT_RADIUS_PX
     )
     return html, outer
 
-def is_conceptual_point(props):
-    """True when the point has no formation identity.
-
-    The source table encodes that absence as JSON null (70 Ma, 75 Ma) or the
-    placeholder ``N/A`` (every other age). Blank text is the same absence.
-    Interpolation still uses these points; only the drawing drops them.
-    """
-    value = (props or {}).get('ID')
+def _absent_identity(value):
+    """True for JSON null, blank text, and the N/A placeholder."""
     if value is None:
         return True
     text = str(value).strip()
     return text == '' or text.upper() in {'N/A', 'NA'}
+
+
+def is_conceptual_point(props):
+    """True when the point has no locality.
+
+    A blank ID used to be the whole test: the conceptual grid stored null or
+    ``N/A`` there and left country, basin and formation empty. The October
+    table also leaves ID null on real formations, which still name a country,
+    a basin, or a formation. Those are data points. A paleozone lattice
+    anchor has none of the three, so it still feeds KNN/IDW and is not drawn.
+    """
+    props = props or {}
+    if not _absent_identity(props.get('ID')):
+        return False
+    return all(
+        _absent_identity(props.get(key))
+        for key in ('Country', 'Basin_Sub_', 'Formation')
+    )
+
+
+# Conceptual anchors sit on this lattice in the source frame, before the
+# paleo-frame rotation. The previous point files carried the same nodes.
+CONCEPTUAL_GRID_DEGREES = 5.0
+CONCEPTUAL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'conceptual')
+
+
+def _exterior_rings(geometry):
+    """Exterior rings of a Polygon or MultiPolygon, holes left out."""
+    kind = (geometry or {}).get('type')
+    coords = (geometry or {}).get('coordinates') or []
+    if kind == 'Polygon':
+        return [coords[0]] if coords else []
+    if kind == 'MultiPolygon':
+        return [poly[0] for poly in coords if poly]
+    return []
+
+
+def conceptual_anchors_from_paleozones(paleozones_data, step=CONCEPTUAL_GRID_DEGREES):
+    """Climate-class anchors on the 5° nodes that fall inside a paleozone.
+
+    The polygons are not drawn and are not painted into the raster. A node
+    inside more than one polygon takes ``CLASS_TIE_PRIORITY`` (Dry, then
+    Humid, then Semi-arid), which is the class the previous grid used where
+    a dry belt and a semi-arid belt share a node. Returned features are
+    conceptual points: no country, basin or formation.
+    """
+    rings = []
+    for feature in (paleozones_data or {}).get('features') or []:
+        code = paleozone_climate_class(feature.get('properties') or {})
+        if code not in CLIMATE_CODE:
+            continue
+        for ring in _exterior_rings(feature.get('geometry') or {}):
+            if len(ring) >= 3:
+                rings.append((code, MplPath([(point[0], point[1]) for point in ring])))
+    if not rings:
+        return []
+    stride = int(step)
+    anchors = []
+    for lon in range(-180, 180 + stride, stride):
+        for lat in range(-90, 90 + stride, stride):
+            hits = [code for code, path in rings if path.contains_point((lon, lat))]
+            if not hits:
+                continue
+            present = set(hits)
+            if len(present) == 1:
+                code = hits[0]
+            else:
+                code = next(candidate for candidate in CLASS_TIE_PRIORITY if candidate in present)
+            anchors.append({
+                'type': 'Feature',
+                'properties': {'ID': 'N/A', 'Climate_Cl': code},
+                'geometry': {'type': 'Point', 'coordinates': [float(lon), float(lat)]},
+            })
+    return anchors
+
+
+def conceptual_anchors_from_file(base, directory=CONCEPTUAL_DIR):
+    """Recovered conceptual grid for an age that has no paleozone file.
+
+    115 Ma is the only such age. 145 Ma has neither file and stays data
+    points only.
+    """
+    path = os.path.join(directory, f'{base}.geojson')
+    if not os.path.isfile(path):
+        return []
+    data = load_geojson(path)
+    return [
+        feature for feature in data.get('features') or []
+        if (feature.get('geometry') or {}).get('type') == 'Point'
+        and is_conceptual_point(feature.get('properties') or {})
+    ]
+
+
+def with_conceptual_anchors(points_data, anchors):
+    """Point collection plus conceptual anchors, for the interpolator only."""
+    features = list((points_data or {}).get('features') or [])
+    features.extend(anchors or [])
+    return {'type': 'FeatureCollection', 'features': features}
 
 
 def drawable_point_features(points_data):
@@ -4994,14 +5087,30 @@ def main():
             points_data = load_geojson(points_path)
             coastline_data = load_geojson(coast_path)
             basins_data = load_geojson(basins_path) if basins_path else None
+            paleozones_data = load_geojson(paleozones_path) if paleozones_path else None
         _record_step(t)
 
         n_pts = len(points_data.get('features', []))
         n_coast = len(coastline_data.get('features', []))
         print(f"Loaded {n_pts} points from {points_path}")
         print(f"Loaded {n_coast} coastline features from {coast_path}")
+        # The paleozone layer stays off. The file is read only to place the
+        # conceptual lattice that anchors the interpolator.
+        anchors = conceptual_anchors_from_paleozones(paleozones_data)
+        anchor_source = 'paleozones'
+        if not anchors:
+            anchors = conceptual_anchors_from_file(base)
+            anchor_source = 'recovered grid'
         if paleozones_path:
-            print(f"Paleozones file ignored (layer is not drawn): {paleozones_path}")
+            print(
+                f"Paleozones not drawn; {len(anchors)} conceptual anchors "
+                f"from {anchor_source}: {paleozones_path}"
+            )
+        elif anchors:
+            print(
+                f"No Paleozones file for {base}; {len(anchors)} conceptual "
+                f"anchors from {anchor_source}"
+            )
         else:
             print(f"No Paleozones file for {base}")
         if basins_data is not None:
@@ -5020,7 +5129,8 @@ def main():
 
         with StepTimer("Condense data points") as t:
             interpolator_data, condensed_data, overruled_data = condense_proxy_points(
-                points_data, eps_degrees=condensation_radius
+                with_conceptual_anchors(points_data, anchors),
+                eps_degrees=condensation_radius,
             )
             write_condensation_audit(base, condensed_data, overruled_data)
         _record_step(t)

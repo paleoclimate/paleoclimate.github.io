@@ -84,8 +84,11 @@ runs live PDF export. Extra pytest flags go after `--`, for example
   - Yellow: Dry (D)
   - Green: Semi-arid (S)
   
-- **Paleozones**: Not drawn. A `{age}_ma_paleozones.geojson` file is still ignored
-  as a point dataset, and it does not seed or mask the raster.
+- **Paleozones**: Not drawn. A `{age}_ma_paleozones.geojson` file is sampled
+  onto a 5° lattice of conceptual anchors that feed the interpolator. The
+  polygons are not painted into the raster and there is no Paleozones checkbox.
+  115 Ma has no paleozone file; its lattice is `conceptual/115_ma.geojson`.
+  145 Ma has neither, so that age is data points only.
 
 - **Basins**: Optional sedimentary-basin outlines for that reconstruction age.
   Stroke only, on when the map opens. A click on the outline or inside
@@ -108,6 +111,8 @@ runs live PDF export. Extra pytest flags go after `--`, for example
 - `GEOJSON/`: Point files (`{age}_ma.geojson`), coastlines (`{age}_ma_coastline.geojson`),
   optional paleozones (`{age}_ma_paleozones.geojson`), and optional basin
   outlines (`{age}_ma_basins.geojson`)
+- `conceptual/`: Recovered conceptual lattice for an age with no paleozone file
+  (`115_ma.geojson`)
 - `GEOTIFF/`: Contains GeoTIFF raster files
 - `RASTER/`: Contains ArcGIS raster data (not directly used in current implementation)
 
