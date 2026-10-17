@@ -1384,21 +1384,68 @@ def conceptual_anchors_from_paleozones(paleozones_data, step=CONCEPTUAL_GRID_DEG
     return anchors
 
 
-def conceptual_anchors_from_file(base, directory=CONCEPTUAL_DIR):
-    """Recovered conceptual grid for an age that has no paleozone file.
+CONCEPTUAL_FILE_SUFFIX = '_conceptual.geojson'
 
-    115 Ma is the only such age. 145 Ma has neither file and stays data
-    points only.
+
+def conceptual_climate_class(props):
+    """Climate class of a conceptual anchor, or None when it has none.
+
+    Sixteen ages store ``Climate_Cl``. The 145 Ma lattice stores ``Paleozona``
+    (humid / dry / semi-arid) and leaves ``Climate_Cl`` empty. A point with
+    neither field is not an anchor: the interpolator would otherwise default
+    it to semi-arid.
     """
-    path = os.path.join(directory, f'{base}.geojson')
+    code = get_climate_class(props, None)
+    if code in CLIMATE_CODE:
+        return code
+    if not props:
+        return None
+    if props.get('Paleozona') is None and props.get('Paleozone') is None:
+        return None
+    code = paleozone_climate_class(props, default=None)
+    return code if code in CLIMATE_CODE else None
+
+
+def conceptual_anchors_from_file(base, directory=CONCEPTUAL_DIR):
+    """Conceptual lattice for one age: ``{base}_conceptual.geojson``.
+
+    A ``Paleozona`` label is copied onto ``Climate_Cl`` when that field is
+    missing, so the interpolator reads the class the file actually stored.
+    """
+    path = os.path.join(directory, f'{base}{CONCEPTUAL_FILE_SUFFIX}')
     if not os.path.isfile(path):
         return []
     data = load_geojson(path)
-    return [
-        feature for feature in data.get('features') or []
-        if (feature.get('geometry') or {}).get('type') == 'Point'
-        and is_conceptual_point(feature.get('properties') or {})
-    ]
+    anchors = []
+    for feature in data.get('features') or []:
+        if (feature.get('geometry') or {}).get('type') != 'Point':
+            continue
+        props = dict(feature.get('properties') or {})
+        if not is_conceptual_point(props):
+            continue
+        code = conceptual_climate_class(props)
+        if code not in CLIMATE_CODE:
+            continue
+        if get_climate_class(props, None) not in CLIMATE_CODE:
+            props['Climate_Cl'] = code
+        anchors.append({
+            'type': 'Feature',
+            'properties': props,
+            'geometry': feature.get('geometry'),
+        })
+    return anchors
+
+
+def conceptual_anchors_for_dataset(base, paleozones_data, directory=CONCEPTUAL_DIR):
+    """Anchors for one age, and a short name for where they came from.
+
+    The conceptual file wins. Sampling the paleozone polygons onto the 5°
+    lattice is only the fallback when that file is missing or empty.
+    """
+    anchors = conceptual_anchors_from_file(base, directory=directory)
+    if anchors:
+        return anchors, 'conceptual file'
+    return conceptual_anchors_from_paleozones(paleozones_data), 'paleozones'
 
 
 def with_conceptual_anchors(points_data, anchors):
@@ -5094,25 +5141,25 @@ def main():
         n_coast = len(coastline_data.get('features', []))
         print(f"Loaded {n_pts} points from {points_path}")
         print(f"Loaded {n_coast} coastline features from {coast_path}")
-        # The paleozone layer stays off. The file is read only to place the
-        # conceptual lattice that anchors the interpolator.
-        anchors = conceptual_anchors_from_paleozones(paleozones_data)
-        anchor_source = 'paleozones'
-        if not anchors:
-            anchors = conceptual_anchors_from_file(base)
-            anchor_source = 'recovered grid'
-        if paleozones_path:
+        # The paleozone layer stays off. Conceptual anchors feed the
+        # interpolator and are not drawn. The per-age file wins; the
+        # paleozone sample is only the fallback.
+        anchors, anchor_source = conceptual_anchors_for_dataset(base, paleozones_data)
+        if anchor_source == 'conceptual file':
+            conceptual_path = os.path.join(
+                CONCEPTUAL_DIR, f'{base}{CONCEPTUAL_FILE_SUFFIX}'
+            )
             print(
                 f"Paleozones not drawn; {len(anchors)} conceptual anchors "
-                f"from {anchor_source}: {paleozones_path}"
+                f"from {conceptual_path}"
             )
-        elif anchors:
+        elif anchors and paleozones_path:
             print(
-                f"No Paleozones file for {base}; {len(anchors)} conceptual "
-                f"anchors from {anchor_source}"
+                f"Paleozones not drawn; {len(anchors)} conceptual anchors "
+                f"sampled from {paleozones_path}"
             )
         else:
-            print(f"No Paleozones file for {base}")
+            print(f"No conceptual anchors for {base}")
         if basins_data is not None:
             n_basins = len(basins_data.get('features', []))
             print(f"Loaded {n_basins} basin outlines from {basins_path}")
