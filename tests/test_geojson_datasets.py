@@ -235,7 +235,7 @@ def test_coastline_is_the_dark_shore():
 def test_basin_outlines_are_a_stroke_and_keep_only_the_name():
     assert renderer.LAYER_BASINS == 'Basins'
     assert renderer.BASIN_OUTLINE_SHOW is True
-    assert 145 in renderer.VIEWER_HIDDEN_AGES
+    assert 145 not in renderer.VIEWER_HIDDEN_AGES
     styled = renderer.basin_outline_style({})
     assert styled['fill'] is True
     assert styled['fillOpacity'] == 0

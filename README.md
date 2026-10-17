@@ -175,7 +175,7 @@ Results: open `COMPARISON/index_comparison.html` for HTML reports and CSV metric
 - The map opens framed on the interpolated raster area
 - You can toggle layers on/off using the layer control
 - The basin filter narrows the data points down to selected basins. Basin outlines are a separate layer and do not follow that filter
-- 145 Ma is generated with the other ages and is left out of the viewer age list
+- 145 Ma is generated with the other ages and is listed in the viewer age menu
 - Use the fullscreen button for better viewing
 - The measurement tool allows you to measure distances on the map
 - In the viewer, the age menu changes the reconstruction age and `P` exports a PDF

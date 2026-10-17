@@ -76,8 +76,9 @@ POINT_MORE_FIELDS = (
     ('Lithology, structures, paleowind', 'Lithology'),
 )
 
-# Generated onto disk, omitted from the viewer age list.
-VIEWER_HIDDEN_AGES = frozenset({145})
+# Generated ages left out of the viewer menu. Empty: every age is listed,
+# including 145 Ma.
+VIEWER_HIDDEN_AGES = frozenset()
 
 # Companion GeoJSON suffixes. Point files are `{base}.geojson`; these are never
 # treated as point datasets.
