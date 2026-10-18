@@ -235,7 +235,7 @@ def test_coastline_is_the_dark_shore():
 def test_basin_outlines_are_a_stroke_and_keep_only_the_name():
     assert renderer.LAYER_BASINS == 'Basins'
     assert renderer.BASIN_OUTLINE_SHOW is True
-    assert 145 in renderer.VIEWER_HIDDEN_AGES
+    assert 145 not in renderer.VIEWER_HIDDEN_AGES
     styled = renderer.basin_outline_style({})
     assert styled['fill'] is True
     assert styled['fillOpacity'] == 0
@@ -301,8 +301,8 @@ def test_paleozone_lattice_samples_five_degree_nodes_and_prefers_dry():
     assert len(_interpolator['features']) == 1 + len(anchors)
 
 
-def test_recovered_conceptual_file_is_used_when_the_age_has_no_paleozones(tmp_path):
-    _write_geojson(tmp_path / '115_ma.geojson', [{
+def test_conceptual_file_is_named_for_the_age(tmp_path):
+    _write_geojson(tmp_path / '115_ma_conceptual.geojson', [{
         'type': 'Feature',
         'properties': {'ID': 'N/A', 'Climate_Cl': 'H'},
         'geometry': {'type': 'Point', 'coordinates': [10.0, -20.0]},
@@ -313,12 +313,93 @@ def test_recovered_conceptual_file_is_used_when_the_age_has_no_paleozones(tmp_pa
     assert renderer.conceptual_anchors_from_file('145_ma', directory=str(tmp_path)) == []
 
 
-def test_115_ma_recovered_lattice_is_conceptual_and_on_the_grid():
-    path = Path(__file__).resolve().parents[1] / 'conceptual' / '115_ma.geojson'
-    data = json.loads(path.read_text(encoding='utf-8'))
-    assert len(data['features']) == 206
-    for feature in data['features']:
-        assert renderer.is_conceptual_point(feature['properties'])
-        lon, lat = feature['geometry']['coordinates']
-        assert lon % 5 == 0 and lat % 5 == 0
-        assert feature['properties']['Climate_Cl'] in {'D', 'S', 'H'}
+def test_conceptual_file_beats_the_paleozone_sample(tmp_path):
+    _write_geojson(tmp_path / '100_ma_conceptual.geojson', [{
+        'type': 'Feature',
+        'properties': {'ID': 'N/A', 'Country': 'N/A', 'Climate_Cl': 'D'},
+        'geometry': {'type': 'Point', 'coordinates': [10.0, -20.0]},
+    }])
+    paleozones = {
+        'type': 'FeatureCollection',
+        'features': [{
+            'type': 'Feature',
+            'properties': {'Paleozona': 'Humid'},
+            'geometry': {'type': 'Polygon', 'coordinates': [[
+                [-2.5, -2.5], [2.5, -2.5], [2.5, 2.5], [-2.5, 2.5], [-2.5, -2.5],
+            ]]},
+        }],
+    }
+    anchors, source = renderer.conceptual_anchors_for_dataset(
+        '100_ma', paleozones, directory=str(tmp_path),
+    )
+    assert source == 'conceptual file'
+    assert [feature['properties']['Climate_Cl'] for feature in anchors] == ['D']
+
+
+def test_paleozone_sample_is_the_fallback_without_a_conceptual_file(tmp_path):
+    paleozones = {
+        'type': 'FeatureCollection',
+        'features': [{
+            'type': 'Feature',
+            'properties': {'Paleozona': 'Humid'},
+            'geometry': {'type': 'Polygon', 'coordinates': [[
+                [-2.5, -2.5], [2.5, -2.5], [2.5, 2.5], [-2.5, 2.5], [-2.5, -2.5],
+            ]]},
+        }],
+    }
+    anchors, source = renderer.conceptual_anchors_for_dataset(
+        '100_ma', paleozones, directory=str(tmp_path),
+    )
+    assert source == 'paleozones'
+    assert anchors
+    assert all(feature['properties']['Climate_Cl'] == 'H' for feature in anchors)
+
+
+def test_conceptual_file_reads_paleozona_when_climate_cl_is_missing(tmp_path):
+    _write_geojson(tmp_path / '145_ma_conceptual.geojson', [
+        {
+            'type': 'Feature',
+            'properties': {'Paleozona': 'humid', 'PaleozonaCodigo': 1},
+            'geometry': {'type': 'Point', 'coordinates': [-60.0, -65.0]},
+        },
+        {
+            'type': 'Feature',
+            'properties': {'Paleozona': 'dry'},
+            'geometry': {'type': 'Point', 'coordinates': [-35.0, -15.0]},
+        },
+        {
+            'type': 'Feature',
+            'properties': {'Paleozona': 'semi-arid'},
+            'geometry': {'type': 'Point', 'coordinates': [0.0, 0.0]},
+        },
+        {
+            'type': 'Feature',
+            'properties': {'ID': '9', 'Country': 'Brazil', 'Climate_Cl': 'H'},
+            'geometry': {'type': 'Point', 'coordinates': [1.0, 1.0]},
+        },
+        {
+            'type': 'Feature',
+            'properties': {'ID': 'N/A'},
+            'geometry': {'type': 'Point', 'coordinates': [15.0, 15.0]},
+        },
+    ])
+    anchors = renderer.conceptual_anchors_from_file('145_ma', directory=str(tmp_path))
+    assert [feature['properties']['Climate_Cl'] for feature in anchors] == ['H', 'D', 'S']
+
+
+def test_every_conceptual_file_loads_as_classed_anchors():
+    root = Path(__file__).resolve().parents[1] / 'conceptual'
+    files = sorted(root.glob('*_ma_conceptual.geojson'), key=lambda path: int(path.name.split('_')[0]))
+    ages = [int(path.name.split('_')[0]) for path in files]
+    assert ages == list(range(65, 150, 5))
+    assert not (root / '115_ma.geojson').exists()
+    for path in files:
+        base = path.name[: -len('_conceptual.geojson')]
+        raw = json.loads(path.read_text(encoding='utf-8'))
+        anchors = renderer.conceptual_anchors_from_file(base, directory=str(root))
+        assert len(anchors) == len(raw['features']), base
+        for feature in anchors:
+            assert renderer.is_conceptual_point(feature['properties'])
+            lon, lat = feature['geometry']['coordinates']
+            assert lon % 5 == 0 and lat % 5 == 0
+            assert feature['properties']['Climate_Cl'] in {'D', 'S', 'H'}

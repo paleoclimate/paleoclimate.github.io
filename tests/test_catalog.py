@@ -117,11 +117,17 @@ def test_catalog_ages_match_idw_map_files():
     assert catalog == idw_ages, f'Catalog ages {sorted(catalog)} != IDW ages {sorted(idw_ages)}'
 
 
+def test_145_ma_is_listed_in_the_age_menu():
+    import render_map as renderer
+
+    assert 145 not in renderer.VIEWER_HIDDEN_AGES
+    assert 145 in catalog_ages()
+
+
 def test_hidden_ages_are_generated_and_omitted_from_the_viewer():
     import render_map as renderer
 
     hidden = set(renderer.VIEWER_HIDDEN_AGES)
-    assert hidden
     assert set(catalog_ages()).isdisjoint(hidden)
     disk_ages = {_html_age(path) for path in idw_html_files()}
     missing = sorted(hidden - disk_ages)

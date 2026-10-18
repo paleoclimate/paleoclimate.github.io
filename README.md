@@ -84,11 +84,11 @@ runs live PDF export. Extra pytest flags go after `--`, for example
   - Yellow: Dry (D)
   - Green: Semi-arid (S)
   
-- **Paleozones**: Not drawn. A `{age}_ma_paleozones.geojson` file is sampled
-  onto a 5° lattice of conceptual anchors that feed the interpolator. The
+- **Paleozones**: Not drawn. Conceptual anchors in
+  `conceptual/{age}_ma_conceptual.geojson` feed the interpolator. The
   polygons are not painted into the raster and there is no Paleozones checkbox.
-  115 Ma has no paleozone file; its lattice is `conceptual/115_ma.geojson`.
-  145 Ma has neither, so that age is data points only.
+  An age with no conceptual file falls back to sampling
+  `{age}_ma_paleozones.geojson` onto a 5° lattice.
 
 - **Basins**: Optional sedimentary-basin outlines for that reconstruction age.
   Stroke only, on when the map opens. A click on the outline or inside
@@ -111,8 +111,8 @@ runs live PDF export. Extra pytest flags go after `--`, for example
 - `GEOJSON/`: Point files (`{age}_ma.geojson`), coastlines (`{age}_ma_coastline.geojson`),
   optional paleozones (`{age}_ma_paleozones.geojson`), and optional basin
   outlines (`{age}_ma_basins.geojson`)
-- `conceptual/`: Recovered conceptual lattice for an age with no paleozone file
-  (`115_ma.geojson`)
+- `conceptual/`: Conceptual lattices, one file per age
+  (`{age}_ma_conceptual.geojson`, 65 Ma through 145 Ma)
 - `GEOTIFF/`: Contains GeoTIFF raster files
 - `RASTER/`: Contains ArcGIS raster data (not directly used in current implementation)
 
@@ -175,7 +175,7 @@ Results: open `COMPARISON/index_comparison.html` for HTML reports and CSV metric
 - The map opens framed on the interpolated raster area
 - You can toggle layers on/off using the layer control
 - The basin filter narrows the data points down to selected basins. Basin outlines are a separate layer and do not follow that filter
-- 145 Ma is generated with the other ages and is left out of the viewer age list
+- 145 Ma is generated with the other ages and is listed in the viewer age menu
 - Use the fullscreen button for better viewing
 - The measurement tool allows you to measure distances on the map
 - In the viewer, the age menu changes the reconstruction age and `P` exports a PDF
