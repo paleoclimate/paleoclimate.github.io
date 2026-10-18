@@ -1,0 +1,7 @@
+# PlateID is filled from the coordinates
+
+The add-points screen used to ask for PlateID as a positive integer. That column is the reconstruction plate of the point's present-day latitude and longitude in the Zahirovic et al. 2022 model already stored as RECONFILE1. The field stays in the required section, it is read-only, and it is filled by which present-day static polygon contains the coordinates. The smaller polygon wins when two contain the point. TIME is not used, because these polygons are the present-day plates. A coordinate pair that falls in no polygon leaves the field empty, so the point cannot be added. The polygons are the EarthByte present-day static polygons shipped with that model (`PLATEID1`), simplified and stored in `plates/zahirovic2022-static.json`.
+
+**Considered options:** (1) this lookup; (2) keep a typed integer; (3) ask the GPlates web service when the point is added; (4) copy the PlateID of the nearest published point. (2) can disagree with the coordinates. (3) makes the screen depend on EarthByte being reachable. (4) assigns a neighbour's plate across a boundary.
+
+**Consequences:** Supersedes the typed PlateID in `docs/adr/0033-add-points-form-matches-the-geojson.md` and `docs/adr/0037-first-section-fields-are-required.md`. The downloaded value is still an integer. Existing rows stay as published: a new point gets the plate that contains its coordinates, including where an older row near a boundary carries a different id.

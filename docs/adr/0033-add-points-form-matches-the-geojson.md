@@ -1,6 +1,6 @@
 # The add-points form follows the October GeoJSON columns
 
-Superseded in part by `docs/adr/0036-show-on-ma-copies-time.md` and `docs/adr/0037-first-section-fields-are-required.md`. Show_on_Ma is no longer a field, and Group, Member, and Well name/outcrop are optional. The required section is the list in 0037.
+Superseded in part by `docs/adr/0036-show-on-ma-copies-time.md`, `docs/adr/0037-first-section-fields-are-required.md`, and `docs/adr/0043-plate-id-comes-from-the-coordinates.md`. Show_on_Ma is no longer a field, Group, Member, and Well name/outcrop are optional, and PlateID is filled from the coordinates instead of typed. The required section is the list in 0037.
 
 The screen is "Add points". Latitude and longitude are required dot-decimal floats in the geographic range, typed in a text field so there is no spinner. TIME is a required choice of a project age (65 to 145 Ma, step 5, including 145 Ma). Climate_Cl is a required Dry / Semi-arid / Humid choice. Country, basin, formation, PlateID and REF(Authors, Year) are required with those. Empty optional text is null. PlateID is an integer.
 

@@ -328,7 +328,6 @@ def _fill_required(page, latitude, longitude, time, climate):
     page.locator('[name="Country"]').fill('Brazil')
     page.locator('[name="Basin_Sub_"]').fill('Test Basin')
     page.locator('[name="Formation"]').fill('Test Formation')
-    page.locator('[name="PlateID"]').fill('201')
     page.locator('[name="REF(Authors, Year)"]').fill('Author, 2020')
 
 
@@ -336,6 +335,7 @@ def test_add_point_form_uses_the_table_without_weight(page, base_url):
     page.goto(f'{base_url}/add-point.html', wait_until='domcontentloaded')
     page.evaluate("localStorage.removeItem('pcvs:added-points')")
     page.goto(f'{base_url}/add-point.html', wait_until='domcontentloaded')
+    page.wait_for_function('() => window.platePolygonsReady === true')
     assert page.locator('h1').inner_text() == 'Add points'
     assert page.get_by_role('heading', name='Required').is_visible()
     assert page.get_by_text('All fields in this section are required.').is_visible()
@@ -366,6 +366,10 @@ def test_add_point_form_uses_the_table_without_weight(page, base_url):
         assert page.locator(f'[name="{name}"]').evaluate('el => el.required') is False
     for name in ('Latitude', 'Country', 'Basin_Sub_', 'Formation', 'PlateID', 'REF(Authors, Year)'):
         assert page.locator(f'[name="{name}"]').evaluate('el => el.required') is True
+    plate = page.locator('[name="PlateID"]')
+    assert plate.evaluate('el => el.readOnly') is True
+    assert page.locator('#plateHint').inner_text() == 'Filled from the coordinates.'
+    assert plate.input_value() == ''
     ages = page.locator('[name="TIME"] option').all_inner_texts()
     assert '65 Ma' in ages and '145 Ma' in ages
     climate = page.locator('[name="Climate_Cl"]')
@@ -376,6 +380,17 @@ def test_add_point_form_uses_the_table_without_weight(page, base_url):
     lon = page.locator('[name="Longitude"]')
     lat.fill('-10.5')
     lon.fill('-40.25')
+    assert plate.input_value() == '201'
+    lon.fill('10')
+    page.locator('[name="Latitude"]').fill('5.5')
+    assert plate.input_value() == '701'
+    lat.fill('-10.5')
+    lon.fill('-40.25')
+    assert plate.input_value() == '201'
+    lat.fill('')
+    assert plate.input_value() == ''
+    lat.fill('-10.5')
+    assert plate.input_value() == '201'
     assert lat.bounding_box()['width'] < 200
     assert page.locator('#pointCount').inner_text() == '0 points added'
     assert page.locator('#downloadBtn').is_disabled()
@@ -386,6 +401,8 @@ def test_add_point_form_uses_the_table_without_weight(page, base_url):
     page.locator('#addBtn').click()
     assert page.locator('#pointCount').inner_text() == '1 point added'
     assert page.locator('[name="Latitude"]').input_value() == ''
+    assert page.locator('[name="PlateID"]').input_value() == ''
+    assert 'plate 201' in page.locator('#pointList').inner_text()
     assert page.locator('[name="TIME"]').input_value() == ''
     assert page.locator('[name="Climate_Cl"]').input_value() == ''
     queued = json.loads(page.evaluate("localStorage.getItem('pcvs:added-points')"))
@@ -393,6 +410,7 @@ def test_add_point_form_uses_the_table_without_weight(page, base_url):
     assert queued[0]['properties']['Show_on_Ma'] == 100
 
     page.goto(f'{base_url}/add-point.html', wait_until='domcontentloaded')
+    page.wait_for_function('() => window.platePolygonsReady === true')
     assert page.locator('#pointCount').inner_text() == '1 point added'
 
     _fill_required(page, '5.5', '10.0', '110', 'D')
@@ -419,6 +437,7 @@ def test_add_point_form_uses_the_table_without_weight(page, base_url):
     assert by_time[100]['properties']['Climate_Cl'] == 'H'
     assert by_time[100]['properties']['Country'] == 'Brazil'
     assert by_time[100]['properties']['PlateID'] == 201
+    assert by_time[110]['properties']['PlateID'] == 701
     assert by_time[110]['geometry']['coordinates'] == [10, 5.5]
     assert by_time[110]['properties']['Climate_Cl'] == 'D'
     for feature in payload['features']:
