@@ -18,3 +18,7 @@ _Avoid_: upload, draft row
 
 **Show_on_Ma**:
 The reconstruction age a point is drawn on. For an added point it is the same age as TIME.
+
+**PlateID**:
+The tectonic plate that contains the point's present-day latitude and longitude.
+_Avoid_: a plate number the author types
