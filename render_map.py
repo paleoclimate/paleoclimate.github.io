@@ -136,6 +136,15 @@ CLASS_TIE_PRIORITY = ('D', 'H', 'S')
 # inverse-distance mean of this many other anchors, at the same power as the IDW.
 KNN_NEIGHBORS = 8
 
+# Anchor weights. A condensed anchor carries the mean reliability (``Weight``,
+# 1 to 10, from the research group's list of paleo-indicators) of the citations
+# that won its vote: the mean, not the sum, so stacked citations do not pull the
+# surface. A conceptual anchor is an interpretation, not an observation, and
+# carries half the weight of the least reliable citation.
+CONCEPTUAL_ANCHOR_WEIGHT = 0.5
+DEFAULT_CITATION_WEIGHT = 1.0
+ANCHOR_WEIGHT_KEY = 'anchor_weight'
+
 # Gaussian sigma, in degrees, applied to each class's share of the IDW weight
 # before the winning class is picked. Conceptual anchors sit on a ~3° grid, and
 # at power 4 the class borders follow that grid as straight runs and right
@@ -1449,6 +1458,32 @@ def conceptual_anchors_for_dataset(base, paleozones_data, directory=CONCEPTUAL_D
     return conceptual_anchors_from_paleozones(paleozones_data), 'paleozones'
 
 
+def citation_weight(props):
+    """Reliability of a citation (``Weight``), or the default when missing or invalid."""
+    value = (props or {}).get('Weight')
+    try:
+        weight = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_CITATION_WEIGHT
+    return weight if weight > 0 else DEFAULT_CITATION_WEIGHT
+
+
+def extract_points_values_weights(points_data):
+    """Anchor coordinates, class codes and weights of the interpolator input.
+
+    Anchors without ``anchor_weight`` count as 1, so a collection built by an
+    older pipeline interpolates exactly as before.
+    """
+    points, values = extract_points_and_values(points_data)
+    weights = []
+    for feature in points_data.get('features', []):
+        geom = feature.get('geometry', {})
+        if geom.get('type') == 'Point' and geom.get('coordinates'):
+            props = feature.get('properties') or {}
+            weights.append(float(props.get(ANCHOR_WEIGHT_KEY, DEFAULT_CITATION_WEIGHT)))
+    return points, values, np.asarray(weights, dtype=np.float64)
+
+
 def with_conceptual_anchors(points_data, anchors):
     """Point collection plus conceptual anchors, for the interpolator only."""
     features = list((points_data or {}).get('features') or [])
@@ -1558,7 +1593,8 @@ def condense_proxy_points(points_data, eps_degrees=CONDENSATION_EPS_DEGREES):
 
     Data points (a formation id) within ``eps_degrees`` of each other, chaining
     through other data points, become one anchor per winning climate class.
-    Each row is one vote. The ``Weight`` column is ignored. An exact tie emits
+    Each row is one vote. Each condensed anchor carries, as ``anchor_weight``,
+    the mean ``Weight`` of the rows that voted for its class. An exact tie emits
     one anchor per tied class at the same mean coordinate, with no jitter.
 
     Conceptual points are copied onto the interpolator unchanged and never
@@ -1615,6 +1651,10 @@ def condense_proxy_points(points_data, eps_degrees=CONDENSATION_EPS_DEGREES):
             )
             tied = len(winners) > 1
             for code in winners:
+                code_weights = [
+                    citation_weight(data_features[i].get('properties') or {})
+                    for i, climate in zip(group, climates) if climate == code
+                ]
                 condensed.append({
                     'type': 'Feature',
                     'properties': {
@@ -1624,6 +1664,7 @@ def condense_proxy_points(points_data, eps_degrees=CONDENSATION_EPS_DEGREES):
                         'tie': tied,
                         'status': 'tie' if tied else 'majority',
                         'member_ids': member_ids,
+                        ANCHOR_WEIGHT_KEY: float(sum(code_weights) / len(code_weights)),
                     },
                     'geometry': {
                         'type': 'Point',
@@ -1643,10 +1684,14 @@ def condense_proxy_points(points_data, eps_degrees=CONDENSATION_EPS_DEGREES):
                     'geometry': copy.deepcopy(data_features[i].get('geometry')),
                 })
 
-    interpolator = (
-        [copy.deepcopy(feature) for feature in condensed]
-        + [copy.deepcopy(feature) for feature in conceptual_features]
-    )
+    conceptual_copies = []
+    for feature in conceptual_features:
+        copied = copy.deepcopy(feature)
+        copied.setdefault('properties', {})
+        copied['properties'] = dict(copied['properties'] or {})
+        copied['properties'][ANCHOR_WEIGHT_KEY] = CONCEPTUAL_ANCHOR_WEIGHT
+        conceptual_copies.append(copied)
+    interpolator = [copy.deepcopy(feature) for feature in condensed] + conceptual_copies
     return (
         _feature_collection(interpolator),
         _feature_collection(condensed),
