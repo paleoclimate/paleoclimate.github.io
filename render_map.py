@@ -1714,17 +1714,28 @@ def write_condensation_audit(base, condensed, overruled, directory='CONDENSED'):
     return paths
 
 
-def _indicator_winners(distances, values, power):
+def _anchor_weights(weights, n):
+    if weights is None:
+        return np.ones(n, dtype=np.float64)
+    weights = np.asarray(weights, dtype=np.float64)
+    if weights.shape != (n,):
+        raise ValueError(f'expected {n} anchor weights, got shape {weights.shape}')
+    return weights
+
+
+def _indicator_winners(distances, values, power, weights=None):
     """Winning climate code per row of ``distances``.
 
-    Each anchor adds ``1 / d^power`` to its own class. A cell on top of an
-    anchor gives that class infinite weight. Equal winning weights break
+    Each anchor adds ``weight / d^power`` to its own class (weight 1 when
+    ``weights`` is None). The class code never enters the sum. A cell on top of
+    an anchor gives that class infinite weight. Equal winning weights break
     toward the nearest tied anchor, then ``CLASS_TIE_PRIORITY``.
     """
     values = np.asarray(values, dtype=np.float64)
+    anchor_w = _anchor_weights(weights, distances.shape[1])
     zero = distances == 0
     safe = np.where(zero, 1.0, distances)
-    weights = np.where(zero, np.inf, 1.0 / np.power(safe, power))
+    weights = np.where(zero, np.inf, anchor_w[None, :] / np.power(safe, power))
     codes = np.array([CLIMATE_CODE['D'], CLIMATE_CODE['S'], CLIMATE_CODE['H']])
     class_weights = np.column_stack([
         weights[:, values == code].sum(axis=1) if np.any(values == code)
@@ -1749,7 +1760,7 @@ def _indicator_winners(distances, values, power):
     return winners
 
 
-def indicator_idw(points, values, grid_lons, grid_lats, power=1.0, chunk=4096):
+def indicator_idw(points, values, grid_lons, grid_lats, power=1.0, chunk=4096, weights=None):
     """Class raster: each cell takes the climate class with the greatest IDW weight.
 
     Every anchor participates. There is no neighbor cap and no snap disk.
@@ -1768,7 +1779,7 @@ def indicator_idw(points, values, grid_lons, grid_lats, power=1.0, chunk=4096):
     for start in range(0, len(grid_points), chunk):
         stop = start + chunk
         distances = cdist(grid_points[start:stop], points)
-        winners[start:stop] = _indicator_winners(distances, values, power)
+        winners[start:stop] = _indicator_winners(distances, values, power, weights)
     return winners.reshape(lon_grid.shape)
 
 
@@ -1781,20 +1792,23 @@ def _winning_class(shares):
     return _CLASS_CODES[_PRIORITY_ROWS][np.argmax(shares[_PRIORITY_ROWS], axis=0)]
 
 
-def _indicator_shares(distances, values, power):
+def _indicator_shares(distances, values, power, weights=None):
     """Dry, semi-arid and humid share of the IDW weight, per row of ``distances``.
 
-    A cell on top of anchors splits its weight among the anchors it touches.
+    A cell on top of anchors splits its weight among the anchors it touches,
+    in proportion to their anchor weights.
     """
+    anchor_w = _anchor_weights(weights, distances.shape[1])
     zero = distances == 0
-    weights = 1.0 / np.power(np.where(zero, 1.0, distances), power)
+    weights = anchor_w[None, :] / np.power(np.where(zero, 1.0, distances), power)
     on_anchor = zero.any(axis=1)
-    weights[on_anchor] = zero[on_anchor]
+    weights[on_anchor] = zero[on_anchor] * anchor_w[None, :]
     shares = np.column_stack([weights[:, values == code].sum(axis=1) for code in _CLASS_CODES])
     return shares / shares.sum(axis=1, keepdims=True)
 
 
-def indicator_idw_with_shares(points, values, grid_lons, grid_lats, power=1.0, chunk=4096):
+def indicator_idw_with_shares(points, values, grid_lons, grid_lats, power=1.0, chunk=4096,
+                              weights=None):
     """``indicator_idw`` winners plus each class's weight share, shaped (3, lat, lon)."""
     if len(points) == 0:
         raise ValueError("No points available for indicator IDW")
@@ -1809,8 +1823,8 @@ def indicator_idw_with_shares(points, values, grid_lons, grid_lats, power=1.0, c
     for start in range(0, len(grid_points), chunk):
         stop = start + chunk
         distances = cdist(grid_points[start:stop], points)
-        winners[start:stop] = _indicator_winners(distances, values, power)
-        shares[start:stop] = _indicator_shares(distances, values, power)
+        winners[start:stop] = _indicator_winners(distances, values, power, weights)
+        shares[start:stop] = _indicator_shares(distances, values, power, weights)
     return winners.reshape(lon_grid.shape), shares.T.reshape((len(_CLASS_CODES),) + lon_grid.shape)
 
 
@@ -1860,11 +1874,13 @@ def round_class_zones(shares, winners, points, values, grid_lons, grid_lats, res
 
 
 def create_indicator_raster(points, values, output_path, resolution=0.1, power=1.0,
-                            edge_smooth=0.0):
+                            edge_smooth=0.0, weights=None, confidence_path=None):
     """Write a GeoTIFF whose cell values are climate class codes 1, 2 or 3.
 
     ``edge_smooth`` is the Gaussian sigma, in degrees, of ``round_class_zones``;
-    0 keeps the plain indicator IDW winners.
+    0 keeps the plain indicator IDW winners. ``weights`` are the anchor weights
+    (None = 1 each). When ``confidence_path`` is given, a second GeoTIFF stores
+    the share of the winning class before smoothing (1/3 to 1).
     """
     points = np.asarray(points, dtype=np.float64)
     values = np.asarray(values, dtype=np.float64)
@@ -1880,17 +1896,22 @@ def create_indicator_raster(points, values, output_path, resolution=0.1, power=1
     print(f"Bounds: [{min_lat:.2f}, {min_lon:.2f}] to [{max_lat:.2f}, {max_lon:.2f}]")
     print(f"Anchors: {len(points)} (all of them; power {power}; no snap disk)")
 
-    if edge_smooth > 0:
+    shares = None
+    if edge_smooth > 0 or confidence_path:
         winners, shares = indicator_idw_with_shares(
-            points, values, grid_lons, grid_lats, power=power
+            points, values, grid_lons, grid_lats, power=power, weights=weights
         )
+    if edge_smooth > 0:
         grid_values = round_class_zones(
             shares, winners, points, values, grid_lons, grid_lats, resolution, edge_smooth
         )
         changed = float(np.mean(grid_values != winners)) * 100.0
         print(f"Edge smoothing: sigma {edge_smooth}°, {changed:.1f}% of cells changed class")
+    elif shares is not None:
+        grid_values = winners
     else:
-        grid_values = indicator_idw(points, values, grid_lons, grid_lats, power=power)
+        grid_values = indicator_idw(points, values, grid_lons, grid_lats, power=power,
+                                    weights=weights)
 
     transform = from_bounds(
         min_lon, min_lat, max_lon, max_lat, len(grid_lons), len(grid_lats)
@@ -1912,6 +1933,17 @@ def create_indicator_raster(points, values, output_path, resolution=0.1, power=1
     ) as dst:
         dst.write(grid_values, 1)
     print(f"Indicator IDW raster saved to: {output_path}")
+    if confidence_path:
+        confidence = shares.max(axis=0).astype(np.float32)
+        conf_dir = os.path.dirname(confidence_path)
+        if conf_dir:
+            os.makedirs(conf_dir, exist_ok=True)
+        with rasterio.open(
+            confidence_path, 'w', driver='GTiff', height=len(grid_lats), width=len(grid_lons),
+            count=1, dtype=confidence.dtype, crs='EPSG:4326', transform=transform, compress='lzw',
+        ) as dst:
+            dst.write(confidence, 1)
+        print(f"Confidence raster saved to: {confidence_path}")
     return output_path
 
 
@@ -5114,6 +5146,9 @@ def main():
                              'the raster area (requires playwright)')
     parser.add_argument('--map', dest='maps', nargs='+', metavar='DATASET',
                         help='Render only the given dataset(s), e.g. --map 110 or --map 110 115 (default: all)')
+    parser.add_argument('--no-weights', action='store_true',
+                        help='Give every anchor weight 1 (ignore citation reliability and the '
+                             f'{CONCEPTUAL_ANCHOR_WEIGHT} weight of conceptual anchors).')
     method_group = parser.add_mutually_exclusive_group()
     method_group.add_argument('--brute', dest='method', action='store_const', const=METHOD_BRUTE,
                               help='Record brute force on the published filename [default]. '
@@ -5279,7 +5314,9 @@ def main():
             print(f"Original raster not found ({original_raster_path}), skipping Original map.")
 
         print(f"\nExecuting KNN reclass + indicator IDW — {method_label(method)}")
-        points, values = extract_points_and_values(interpolator_data)
+        points, values, anchor_weights = extract_points_values_weights(interpolator_data)
+        if args.no_weights:
+            anchor_weights = np.ones(len(values), dtype=np.float64)
         with StepTimer(f"KNN reclass (k={KNN_NEIGHBORS}, {method})") as t:
             smoothed = knn_smooth_values(
                 points, values, k=KNN_NEIGHBORS, power=power,
@@ -5289,6 +5326,7 @@ def main():
         _record_step(t)
         changed = int(np.sum(class_values != values))
         print(f"KNN reclassified {changed} of {len(values)} anchors (k={KNN_NEIGHBORS})")
+        confidence_path = os.path.join('GENERATED_CONFIDENCE', f'{base}_confidence{params_suffix}.tif')
 
         with StepTimer(f"Indicator IDW raster ({method})") as t:
             create_indicator_raster(
@@ -5298,6 +5336,8 @@ def main():
                 resolution=0.1,
                 power=power,
                 edge_smooth=edge_smooth,
+                weights=anchor_weights,
+                confidence_path=confidence_path,
             )
         _record_step(t)
 
@@ -5345,6 +5385,7 @@ def main():
     print("All maps generated successfully!")
     print("=" * 60)
     print(f"Power: {power}, KNN neighbors: {KNN_NEIGHBORS}, class colors: equal thirds of [1, 3]")
+    print(f"Anchor weights: {'off' if args.no_weights else 'citation reliability, conceptual ' + str(CONCEPTUAL_ANCHOR_WEIGHT)}")
     print("Edge smoothing: " + (f"Gaussian sigma {edge_smooth}° on the class shares"
                                  if edge_smooth > 0 else "off"))
     print(f"Condensation radius: {condensation_radius}° before the paleo rotation")
