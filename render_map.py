@@ -145,9 +145,10 @@ CONCEPTUAL_ANCHOR_WEIGHT = 0.5
 DEFAULT_CITATION_WEIGHT = 1.0
 ANCHOR_WEIGHT_KEY = 'anchor_weight'
 WEIGHTED_IDW_CAPTION = 'Reliability-weighted class IDW'
+KNN_IDW_CAPTION = 'KNN + IDW interpolation'
 
 # Gaussian sigma, in degrees, applied to each class's share of the IDW weight
-# before the winning class is picked. Conceptual anchors sit on a ~3° grid, and
+# before the winning class is picked. Conceptual anchors sit on a 5° grid, and
 # at power 4 the class borders follow that grid as straight runs and right
 # angles. Around an anchor whose zone this would erase, the blur steps down
 # to half, a quarter, then none.
@@ -4395,12 +4396,15 @@ def _extract_method_tag(filename):
             return method
     return ''
 
-def _map_caption(filename, method):
-    """Caption naming the interpolation a generated map came from."""
+def _map_caption(filename, method, knn=False):
+    """Caption naming the interpolation a generated map came from.
+
+    ``knn`` is True when the run reclassified the anchors by KNN (``--knn``).
+    """
     if '_knn_idw' in filename:
-        # The filename keeps its historical ``knn_idw`` tag; the published maps
-        # come from the reliability-weighted class IDW, without KNN.
-        caption = WEIGHTED_IDW_CAPTION
+        # The filename keeps its historical ``knn_idw`` tag; without ``--knn``
+        # the maps come from the reliability-weighted class IDW.
+        caption = KNN_IDW_CAPTION if knn else WEIGHTED_IDW_CAPTION
     elif '_idw' in filename:
         caption = 'IDW interpolation'
     else:
@@ -4408,8 +4412,11 @@ def _map_caption(filename, method):
     return f'{caption} · {method_label(method)}' if method else caption
 
 
-def generate_index_html(dir_idw, output='index.html'):
-    """Generate the viewer shell. The published maps are the KNN + indicator-IDW rasters."""
+def generate_index_html(dir_idw, output='index.html', knn=False):
+    """Generate the viewer shell for the class IDW maps (``*_knn_idw*`` files).
+
+    ``knn`` names the captions after the KNN + IDW pipeline (``--knn``).
+    """
     maps_list = []
     folder = dir_idw
     if os.path.isdir(folder):
@@ -4434,7 +4441,7 @@ def generate_index_html(dir_idw, output='index.html'):
                 'age': age,
                 'label': f"{age} Ma",
                 'method': method,
-                'caption': _map_caption(h, method),
+                'caption': _map_caption(h, method, knn=knn),
                 'pdf': pdfs,
                 'comparison': comparison_path if os.path.isfile(comparison_path) else '',
             })
@@ -5364,7 +5371,7 @@ def main():
                 color_stats_img_path=raster_overlay_idw_png,
                 method=method,
                 age_label=age_label,
-                map_subtitle='KNN + IDW interpolation' if args.knn else WEIGHTED_IDW_CAPTION,
+                map_subtitle=KNN_IDW_CAPTION if args.knn else WEIGHTED_IDW_CAPTION,
                 basins_data=basins_data,
             )
         _record_step(t)
@@ -5409,7 +5416,7 @@ def main():
         print(f"  {f}")
 
     with StepTimer("Generate index.html", indent=0) as t:
-        generate_index_html(dir_idw_maps)
+        generate_index_html(dir_idw_maps, knn=args.knn)
     _publish_protected_site()
 
     script_rss_end = _RSS_SAMPLER.sample()
