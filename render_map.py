@@ -422,18 +422,52 @@ class StepTimer:
         return False
 
 
+# Euler pole, in degrees, of the reference-frame correction (all ages).
+PALEO_REFERENCE_FRAME_POLE = (0.0, 60.0)
+
+# Rotation angle, in degrees, about PALEO_REFERENCE_FRAME_POLE for each age (Ma).
+PALEO_REFERENCE_FRAME_ANGLES = {
+    65: 1.6,
+    70: 0.2,
+    75: -1.4,
+    80: -3.1,
+    85: -5.5,
+    90: -8.5,
+    95: -11.7,
+    100: -13.1,
+    105: -13.8,
+    110: -14.5,
+    115: -15.9,
+    120: -16.4,
+    125: -17.8,
+    130: -19.4,
+    135: -20.8,
+    140: -21.4,
+    145: -21.4,
+}
+
 PALEO_REFERENCE_FRAME_CORRECTIONS = {
-    # Maps a dataset base name (e.g. '100_ma') to an Euler rotation that converts
-    # the input coordinates from the GPlates "OptimisedMantleRef" reference frame
-    # used by the Zahirovic et al. 2022 rotation file to a paleomagnetic-aligned
-    # frame where the equator passes through northern South America at 100 Ma
-    # (Amazonas / Roraima / Pará / Amapá), matching standard paleogeographic atlases.
+    # Maps a dataset base name (e.g. '100_ma') to an Euler rotation
+    # (pole_lat_deg, pole_lon_deg, angle_deg) applied after the GPlates
+    # reconstruction. The input files are in the mantle frame of the
+    # Zahirovic et al. (2022) model (OptimisedMantleRef). The correction moves
+    # them towards a paleomagnetic frame. It is not a projection or datum fix.
     #
-    # Each entry is (pole_lat_deg, pole_lon_deg, angle_deg). The 'default' entry
-    # is applied to every dataset that does not have its own override.
-    # Calibrated empirically against the 100 Ma reference so that Brazilian basins
-    # (Barreirinhas, Pará-Maranhão, Foz do Amazonas) sit on the new equator and
-    # the South America Craton coastline straddles the equatorial zone.
+    # One angle per age (docs/adr/0045-reference-frame-correction-per-age-angle.md,
+    # 2026-10-23): the angle about the fixed pole (0° N, 60° E) that minimizes
+    # the RMS paleolatitude error of seven Brazilian margin basins (Foz do
+    # Amazonas, Pará-Maranhão, Barreirinhas, Potiguar, Sergipe-Alagoas, Campos,
+    # Santos) against the APWP of Vaes et al. (2023), queried through
+    # paleolatitude.org (van Hinsbergen et al., 2015). RMS error < 0.45° at
+    # every age. Evaluation script: avalia_rotacao.py (kept outside the
+    # repository with the private data). Valid for South America only: seven
+    # points on plate 201 and a fixed pole.
+    #
+    # Before 2026-10-23 every age used the 'default' rotation, a visual fit at
+    # 100 Ma (commit 06b32b7, 2026-05-08). It stays as the fallback for a
+    # dataset name outside the table.
+    **{f'{age}_ma': PALEO_REFERENCE_FRAME_POLE + (angle,)
+       for age, angle in PALEO_REFERENCE_FRAME_ANGLES.items()},
     'default': (0.0, 60.0, -13.0),
 }
 
