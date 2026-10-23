@@ -2,3 +2,6 @@ backup/
 GEOJSON/
 __pycache__/
 node_modules/
+
+# Rasters de confiança revelam a posição dos dados; ficam só locais
+GENERATED_CONFIDENCE/
