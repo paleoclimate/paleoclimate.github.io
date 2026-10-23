@@ -144,6 +144,7 @@ KNN_NEIGHBORS = 8
 CONCEPTUAL_ANCHOR_WEIGHT = 0.5
 DEFAULT_CITATION_WEIGHT = 1.0
 ANCHOR_WEIGHT_KEY = 'anchor_weight'
+WEIGHTED_IDW_CAPTION = 'Reliability-weighted class IDW'
 
 # Gaussian sigma, in degrees, applied to each class's share of the IDW weight
 # before the winning class is picked. Conceptual anchors sit on a ~3° grid, and
@@ -4397,7 +4398,9 @@ def _extract_method_tag(filename):
 def _map_caption(filename, method):
     """Caption naming the interpolation a generated map came from."""
     if '_knn_idw' in filename:
-        caption = 'KNN + IDW interpolation'
+        # The filename keeps its historical ``knn_idw`` tag; the published maps
+        # come from the reliability-weighted class IDW, without KNN.
+        caption = WEIGHTED_IDW_CAPTION
     elif '_idw' in filename:
         caption = 'IDW interpolation'
     else:
@@ -5146,6 +5149,9 @@ def main():
                              'the raster area (requires playwright)')
     parser.add_argument('--map', dest='maps', nargs='+', metavar='DATASET',
                         help='Render only the given dataset(s), e.g. --map 110 or --map 110 115 (default: all)')
+    parser.add_argument('--knn', action='store_true',
+                        help='Reproduce the previous pipeline: reclassify the anchors by KNN '
+                             '(mean of class codes 1-3 cut in thirds) before the IDW. Off by default.')
     parser.add_argument('--no-weights', action='store_true',
                         help='Give every anchor weight 1 (ignore citation reliability and the '
                              f'{CONCEPTUAL_ANCHOR_WEIGHT} weight of conceptual anchors).')
@@ -5313,19 +5319,24 @@ def main():
         else:
             print(f"Original raster not found ({original_raster_path}), skipping Original map.")
 
-        print(f"\nExecuting KNN reclass + indicator IDW — {method_label(method)}")
         points, values, anchor_weights = extract_points_values_weights(interpolator_data)
         if args.no_weights:
             anchor_weights = np.ones(len(values), dtype=np.float64)
-        with StepTimer(f"KNN reclass (k={KNN_NEIGHBORS}, {method})") as t:
-            smoothed = knn_smooth_values(
-                points, values, k=KNN_NEIGHBORS, power=power,
-                exclude_self=True, method=method,
-            )
-            class_values = classify_climate_values(smoothed)
-        _record_step(t)
-        changed = int(np.sum(class_values != values))
-        print(f"KNN reclassified {changed} of {len(values)} anchors (k={KNN_NEIGHBORS})")
+        class_values = values
+        if args.knn:
+            print(f"\nExecuting KNN reclass + indicator IDW — {method_label(method)}")
+            with StepTimer(f"KNN reclass (k={KNN_NEIGHBORS}, {method})") as t:
+                smoothed = knn_smooth_values(
+                    points, values, k=KNN_NEIGHBORS, power=power,
+                    exclude_self=True, method=method,
+                )
+                class_values = classify_climate_values(smoothed)
+            _record_step(t)
+            changed = int(np.sum(class_values != values))
+            print(f"KNN reclassified {changed} of {len(values)} anchors (k={KNN_NEIGHBORS})")
+        else:
+            print(f"\nExecuting weighted indicator IDW (no KNN) — "
+                  f"{len(values)} anchors, weights {anchor_weights.min():.2f} to {anchor_weights.max():.2f}")
         confidence_path = os.path.join('GENERATED_CONFIDENCE', f'{base}_confidence{params_suffix}.tif')
 
         with StepTimer(f"Indicator IDW raster ({method})") as t:
@@ -5341,7 +5352,7 @@ def main():
             )
         _record_step(t)
 
-        print(f"Generating Map: KNN + IDW ({map_idw_file})")
+        print(f"Generating Map: class IDW ({map_idw_file})")
         with StepTimer("Map: IDW") as t:
             create_map(
                 points_data=points_data,
@@ -5353,7 +5364,7 @@ def main():
                 color_stats_img_path=raster_overlay_idw_png,
                 method=method,
                 age_label=age_label,
-                map_subtitle='KNN + IDW interpolation',
+                map_subtitle='KNN + IDW interpolation' if args.knn else WEIGHTED_IDW_CAPTION,
                 basins_data=basins_data,
             )
         _record_step(t)
@@ -5384,8 +5395,8 @@ def main():
     print("\n" + "=" * 60)
     print("All maps generated successfully!")
     print("=" * 60)
-    print(f"Power: {power}, KNN neighbors: {KNN_NEIGHBORS}, class colors: equal thirds of [1, 3]")
-    print(f"Anchor weights: {'off' if args.no_weights else 'citation reliability, conceptual ' + str(CONCEPTUAL_ANCHOR_WEIGHT)}")
+    print(f"Power: {power}; KNN reclassification: {'on (k=' + str(KNN_NEIGHBORS) + ')' if args.knn else 'off'}; "
+          f"anchor weights: {'off' if args.no_weights else 'citation reliability, conceptual ' + str(CONCEPTUAL_ANCHOR_WEIGHT)}")
     print("Edge smoothing: " + (f"Gaussian sigma {edge_smooth}° on the class shares"
                                  if edge_smooth > 0 else "off"))
     print(f"Condensation radius: {condensation_radius}° before the paleo rotation")
