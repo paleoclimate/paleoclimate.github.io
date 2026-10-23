@@ -10,6 +10,7 @@ are replaced with a password shell. The editable add-points form stays in
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,8 +31,11 @@ GATE_TAGS = (
 def _ensure_staticrypt() -> None:
     if STATICRYPT_CLI.is_file():
         return
+    # On Windows npm is a batch file (npm.cmd), which subprocess does not find
+    # without the extension.
+    npm = shutil.which('npm') or ('npm.cmd' if os.name == 'nt' else 'npm')
     subprocess.run(
-        ['npm', 'install', '--no-fund', '--no-audit'],
+        [npm, 'install', '--no-fund', '--no-audit'],
         cwd=REPO_ROOT,
         check=True,
     )
