@@ -41,6 +41,8 @@
   }
   label.short input, label.short select { width: 9rem; }
   label.note textarea { width: 28rem; min-height: 72px; resize: vertical; }
+  input[readonly] { background: #e7ebf0; color: var(--ink); }
+  .field-hint { display: block; font-weight: 450; color: var(--muted); }
   a { color: var(--accent); }
   button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
     outline: 2px solid var(--accent);
@@ -123,7 +125,7 @@ var ESSENTIAL = [
   {name: "Country", kind: "text", required: true},
   {name: "Basin_Sub_", kind: "text", required: true},
   {name: "Formation", kind: "text", required: true},
-  {name: "PlateID", kind: "int", short: true, required: true},
+  {name: "PlateID", kind: "plate", short: true, required: true, readonly: true, hint: "Filled from the coordinates.", hintId: "plateHint"},
   {name: "REF(Authors, Year)", kind: "text", required: true}
 ];
 var OPTIONAL = [
@@ -144,7 +146,6 @@ var OPTIONAL = [
   {name: "Climate assignment leading evidence", kind: "note"}
 ];
 var FLOAT = /^-?\d+(?:\.\d+)?$/;
-var INTEGER = /^\d+$/;
 var points = [];
 
 function addOption(select, value, label, disabled) {
@@ -179,6 +180,12 @@ function makeField(spec) {
     field.selectedIndex = 0;
   } else if (spec.kind === "note") {
     field = document.createElement("textarea");
+  } else if (spec.kind === "plate") {
+    field = document.createElement("input");
+    field.type = "text";
+    field.readOnly = true;
+    field.autocomplete = "off";
+    field.setAttribute("aria-readonly", "true");
   } else {
     field = document.createElement("input");
     field.type = "text";
@@ -189,10 +196,6 @@ function makeField(spec) {
       field.pattern = "^-?\\d+(\\.\\d+)?$";
       field.title = "Use a dot as the decimal separator.";
       field.lang = "en";
-    } else if (spec.kind === "int") {
-      field.inputMode = "numeric";
-      field.pattern = "\\d+";
-      field.title = "Use a positive integer.";
     }
   }
   field.name = spec.name;
@@ -202,26 +205,27 @@ function makeField(spec) {
       var value = field.value.trim();
       if (!value) {
         field.setCustomValidity(spec.required ? "Required." : "");
-        return;
-      }
-      if (!FLOAT.test(value)) {
+      } else if (!FLOAT.test(value)) {
         field.setCustomValidity("Use a dot as the decimal separator.");
-        return;
+      } else {
+        var number = Number(value);
+        if (number < spec.min || number > spec.max) {
+          field.setCustomValidity(spec.name + " must be between " + spec.min + " and " + spec.max + ".");
+        } else {
+          field.setCustomValidity("");
+        }
       }
-      var number = Number(value);
-      if (number < spec.min || number > spec.max) {
-        field.setCustomValidity(spec.name + " must be between " + spec.min + " and " + spec.max + ".");
-        return;
-      }
-      field.setCustomValidity("");
-    });
-  } else if (spec.kind === "int") {
-    field.addEventListener("input", function () {
-      var value = field.value.trim();
-      field.setCustomValidity(value && !INTEGER.test(value) ? "Use a positive integer." : "");
+      if (spec.name === "Latitude" || spec.name === "Longitude") refreshPlate();
     });
   }
   label.appendChild(field);
+  if (spec.hint) {
+    var hint = document.createElement("span");
+    hint.className = "field-hint";
+    if (spec.hintId) hint.id = spec.hintId;
+    hint.textContent = spec.hint;
+    label.appendChild(hint);
+  }
   return label;
 }
 
@@ -283,7 +287,7 @@ function renderQueue() {
     var props = feature.properties;
     var item = document.createElement("li");
     item.appendChild(document.createTextNode(
-      props.Latitude + ", " + props.Longitude + " · " + props.TIME + " Ma"
+      props.Latitude + ", " + props.Longitude + " · " + props.TIME + " Ma · plate " + props.PlateID
     ));
     var remove = document.createElement("button");
     remove.type = "button";
@@ -382,6 +386,108 @@ document.getElementById("downloadBtn").addEventListener("click", function () {
   localStorage.removeItem(STORAGE_KEY);
   renderQueue();
 });
+
+var platePolygons = null;
+window.platePolygonsReady = false;
+
+function plateBBox(rings) {
+  var west = Infinity;
+  var east = -Infinity;
+  var south = Infinity;
+  var north = -Infinity;
+  var crosses = false;
+  rings.forEach(function (ring) {
+    for (var index = 0; index < ring.length; index++) {
+      var longitude = ring[index][0];
+      var latitude = ring[index][1];
+      if (longitude < west) west = longitude;
+      if (longitude > east) east = longitude;
+      if (latitude < south) south = latitude;
+      if (latitude > north) north = latitude;
+      if (index > 0 && Math.abs(ring[index - 1][0] - longitude) > 180) crosses = true;
+    }
+  });
+  if (crosses) {
+    west = -180;
+    east = 180;
+  }
+  return [west, south, east, north];
+}
+
+function ringContains(rings, longitude, latitude) {
+  var crossings = 0;
+  rings.forEach(function (ring) {
+    for (var index = 0; index < ring.length - 1; index++) {
+      var x1 = ring[index][0];
+      var y1 = ring[index][1];
+      var x2 = ring[index + 1][0];
+      var y2 = ring[index + 1][1];
+      var sampleX = longitude;
+      if (Math.abs(x1 - x2) > 180) {
+        if (x1 > x2) x2 += 360;
+        else x1 += 360;
+        sampleX = longitude < 0 ? longitude + 360 : longitude;
+      }
+      if ((y1 > latitude) === (y2 > latitude)) continue;
+      var crossedAt = (x2 - x1) * (latitude - y1) / (y2 - y1) + x1;
+      if (sampleX < crossedAt) crossings += 1;
+    }
+  });
+  return crossings % 2 === 1;
+}
+
+function plateIdAt(longitude, latitude) {
+  if (!platePolygons) return null;
+  var hits = [];
+  platePolygons.forEach(function (plate) {
+    var bbox = plate.bbox;
+    if (longitude < bbox[0] || longitude > bbox[2] || latitude < bbox[1] || latitude > bbox[3]) return;
+    if (ringContains(plate.rings, longitude, latitude)) hits.push(plate);
+  });
+  if (!hits.length) return null;
+  hits.sort(function (a, b) { return a.area - b.area; });
+  return hits[0].id;
+}
+
+function refreshPlate() {
+  var pointForm = document.getElementById("pointForm");
+  var plateField = pointForm.elements.PlateID;
+  var latText = pointForm.elements.Latitude.value.trim();
+  var lonText = pointForm.elements.Longitude.value.trim();
+  plateField.value = "";
+  plateField.setCustomValidity("");
+  if (!FLOAT.test(latText) || !FLOAT.test(lonText)) return;
+  var latitude = Number(latText);
+  var longitude = Number(lonText);
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return;
+  if (!platePolygons) {
+    plateField.setCustomValidity("Plate polygons are still loading.");
+    return;
+  }
+  var id = plateIdAt(longitude, latitude);
+  if (id == null) {
+    plateField.setCustomValidity("No plate contains this point.");
+    return;
+  }
+  plateField.value = String(id);
+}
+
+fetch("plates/zahirovic2022-static.json")
+  .then(function (response) {
+    if (!response.ok) throw new Error(String(response.status));
+    return response.json();
+  })
+  .then(function (payload) {
+    platePolygons = payload.plates.map(function (row) {
+      return {id: row[0], area: row[1], rings: row[2], bbox: plateBBox(row[2])};
+    });
+    window.platePolygonsReady = true;
+    refreshPlate();
+  })
+  .catch(function () {
+    var hint = document.getElementById("plateHint");
+    if (hint) hint.textContent = "Plate polygons did not load.";
+  });
 
 points = loadPoints();
 renderQueue();
