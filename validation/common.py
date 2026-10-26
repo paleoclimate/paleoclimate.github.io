@@ -73,13 +73,13 @@ def rotate_xy(xy: np.ndarray, base: str) -> np.ndarray:
     return np.array([rm.apply_euler_rotation(x, y, pole_lat, pole_lon, angle) for x, y in xy])
 
 
-def build_age(base: str, points: dict, conceptual: list) -> Age:
+def build_age(base: str, points: dict, conceptual: list, eps: float = EPS) -> Age:
     """Interpolator input of one age from a point collection and conceptual anchors.
 
     Citations are grouped with ``rm._cluster_index_groups`` and each group is
     condensed with ``rm.condense_proxy_points`` (winning class, mean Weight),
     so the anchors are those the maps use. The rotation comes after the
-    condensation, as in the pipeline.
+    condensation, as in the pipeline. ``eps`` is the condensation radius.
     """
     feats = []
     for f in (points or {}).get('features', []):
@@ -92,10 +92,10 @@ def build_age(base: str, points: dict, conceptual: list) -> Age:
     coords = [(float(f['geometry']['coordinates'][0]), float(f['geometry']['coordinates'][1]))
               for f in feats]
     xy, val, wt, grp, targets = [], [], [], [], []
-    for gi, group in enumerate(rm._cluster_index_groups(coords, EPS)):
+    for gi, group in enumerate(rm._cluster_index_groups(coords, eps)):
         members = [feats[i] for i in group]
         _, condensed, _ = rm.condense_proxy_points(
-            {'type': 'FeatureCollection', 'features': members}, eps_degrees=EPS)
+            {'type': 'FeatureCollection', 'features': members}, eps_degrees=eps)
         for a in condensed['features']:
             xy.append(a['geometry']['coordinates'][:2])
             val.append(rm.CLIMATE_CODE[a['properties']['Climate_Cl']])
@@ -121,18 +121,20 @@ def build_age(base: str, points: dict, conceptual: list) -> Age:
     return a
 
 
-def load_age(age: int, geojson_dir=DEFAULT_GEOJSON_DIR, conceptual_dir=DEFAULT_CONCEPTUAL_DIR) -> Age:
+def load_age(age: int, geojson_dir=DEFAULT_GEOJSON_DIR, conceptual_dir=DEFAULT_CONCEPTUAL_DIR,
+             eps: float = EPS) -> Age:
     base = f'{age}_ma'
     pts = rm.load_geojson(str(Path(geojson_dir) / f'{base}.geojson'))
     zones_path = Path(geojson_dir) / f'{base}{rm.GEOJSON_PALEOZONES_SUFFIX}'
     zones = rm.load_geojson(str(zones_path)) if zones_path.exists() else None
     with contextlib.redirect_stdout(io.StringIO()):
         anchors, _ = rm.conceptual_anchors_for_dataset(base, zones, directory=str(conceptual_dir))
-    return build_age(base, pts, anchors)
+    return build_age(base, pts, anchors, eps)
 
 
-def load_ages(geojson_dir=DEFAULT_GEOJSON_DIR, conceptual_dir=DEFAULT_CONCEPTUAL_DIR, ages=AGES):
-    return {g: load_age(g, geojson_dir, conceptual_dir) for g in ages}
+def load_ages(geojson_dir=DEFAULT_GEOJSON_DIR, conceptual_dir=DEFAULT_CONCEPTUAL_DIR, ages=AGES,
+              eps: float = EPS):
+    return {g: load_age(g, geojson_dir, conceptual_dir, eps) for g in ages}
 
 
 # ---------------------------------------------------------------- KNN variants
@@ -179,11 +181,11 @@ def anchors_for(a: Age, keep: np.ndarray, mesh_weight, citation_weights: bool = 
     return xy, val, w
 
 
-def idw_class(xy, val, w, q):
+def idw_class(xy, val, w, q, power: float = POWER):
     """Winning class and its weight share at the query points ``q`` (``rm`` class IDW)."""
     d = cdist(np.atleast_2d(q), xy)
-    win = rm._indicator_winners(d, val, POWER, w)
-    shares = rm._indicator_shares(d, val, POWER, w)
+    win = rm._indicator_winners(d, val, power, w)
+    shares = rm._indicator_shares(d, val, power, w)
     return win, shares.max(axis=1)
 
 
@@ -204,12 +206,13 @@ BASELINES = ('G_maioria', 'H_vizinho_1')
 
 
 def predict(a: Age, keep: np.ndarray, q: np.ndarray, cfg: dict):
+    """Prediction at ``q``; ``cfg['power']`` overrides the IDW power (default ``POWER``)."""
     xy, val, w = anchors_for(a, keep, cfg['mesh'], cfg['cit_w'], cfg.get('only_mesh', False))
     if cfg['knn'] == 'ordinal':
         val = knn_ordinal(xy, val)
     elif cfg['knn'] == 'voto':
         val = knn_vote(xy, val)
-    return idw_class(xy, val, w, q)
+    return idw_class(xy, val, w, q, cfg.get('power', POWER))
 
 
 def baselines(a: Age, keep: np.ndarray, q: np.ndarray):

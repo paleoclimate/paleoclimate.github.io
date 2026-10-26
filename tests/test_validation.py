@@ -170,6 +170,49 @@ def test_validation_output_folder_is_ignored_by_git():
     assert c.DEFAULT_OUT_DIR.name == 'VALIDATION_OUT'
 
 
+def test_power_defaults_to_the_map_power_and_can_be_changed(age):
+    keep = np.ones(len(age.data_val), dtype=bool)
+    q = np.array([[13.0, 3.0], [22.5, -3.0]])
+    base = dict(mesh=rm.CONCEPTUAL_ANCHOR_WEIGHT, cit_w=True, knn=None)
+    default, share_default = c.predict(age, keep, q, base)
+    four, share_four = c.predict(age, keep, q, dict(base, power=4.0))
+    assert c.POWER == 4.0
+    assert np.array_equal(default, four) and np.allclose(share_default, share_four)
+    _, share_one = c.predict(age, keep, q, dict(base, power=1.0))
+    # A lower power spreads the weight, so the winning share drops.
+    assert np.all(share_one < share_four)
+
+
+def test_condensation_radius_changes_the_groups():
+    # Two dry citations 0.4 degree apart: one group at 0.5 degree, two at 0.25 degree.
+    feats = [_point(0, 0, 'D', ident='a'), _point(0.4, 0, 'D', ident='b'), _point(10, 0, 'H', ident='c')]
+    assert len(c.build_age('synthetic', _collection(feats), []).targets) == 2
+    assert len(c.build_age('synthetic', _collection(feats), [], eps=0.25).targets) == 3
+
+
+def test_power_radius_sensitivity_runs(age, tmp_path):
+    from validation import power_radius_sensitivity as pr
+
+    configs = {f'p{p:g}': pr.method_b(p) for p in pr.POWERS}
+    rows = pr.summarize(pr.collect({'synthetic': age}, configs),
+                        {f'p{p:g}': dict(potencia=p, raio=c.EPS) for p in pr.POWERS})
+    assert [r['potencia'] for r in rows] == pr.POWERS
+    assert all(r['n_loo'] == r['n_bacia'] == 36 for r in rows)
+    data = tmp_path / 'dados'
+    conc = tmp_path / 'malha'
+    data.mkdir()
+    conc.mkdir()
+    (data / '100_ma.geojson').write_text(json.dumps(synthetic_points()), encoding='utf-8')
+    (conc / '100_ma_conceptual.geojson').write_text(
+        json.dumps(_collection(synthetic_mesh())), encoding='utf-8')
+    out = tmp_path / 'saida'
+    pr.main(['--geojson-dir', str(data), '--conceptual-dir', str(conc), '--out', str(out),
+             '--ages', '100'])
+    result = json.loads((out / 'sensibilidade_potencia_raio.json').read_text(encoding='utf-8'))
+    assert [r['raio'] for r in result['raio']] == pr.RADII
+    assert 'coordinates' not in json.dumps(result)
+
+
 def test_condensation_matches_the_map_pipeline(age):
     """Anchors of build_age are those of condense_proxy_points over the whole collection."""
     _, condensed, _ = rm.condense_proxy_points(synthetic_points())

@@ -12,9 +12,10 @@ From the repository root, with the private data in the local folders:
 ```bash
 python -m validation.leave_out                  # held-out citation, by basin, 10 degree block
 python -m validation.mesh_weight_sensitivity    # mesh weight 0, 0.1, 0.25, 0.5, 0.75
+python -m validation.power_radius_sensitivity   # IDW power 1-8; condensation radius 0.25, 0.5, 1.0
 ```
 
-Options (both scripts): `--geojson-dir` (default `GEOJSON/`), `--conceptual-dir`
+Options (all scripts): `--geojson-dir` (default `GEOJSON/`), `--conceptual-dir`
 (default `conceptual/`), `--out` (default `VALIDATION_OUT/`), `--ages`.
 
 ## What they do
@@ -29,6 +30,10 @@ Options (both scripts): `--geojson-dir` (default `GEOJSON/`), `--conceptual-dir`
 - `mesh_weight_sensitivity`: method B with the mesh weight varied one factor at
   a time; kappa for the held-out citation and the held-out basin, plus the dry
   class recall.
+- `power_radius_sensitivity`: method B with the IDW power (1 to 8) or the
+  condensation radius (0.25, 0.5, 1.0 degree) varied one at a time
+  (`sensibilidade_potencia_raio.json`, ADR 0047). The radius changes the
+  condensed groups, so the number of targets changes with it.
 
 ## Results and privacy
 
