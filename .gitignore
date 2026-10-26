@@ -5,3 +5,6 @@ node_modules/
 
 # Rasters de confiança revelam a posição dos dados; ficam só locais
 GENERATED_CONFIDENCE/
+
+# Resultados da validacao (metricas por idade derivadas dos dados privados)
+VALIDATION_OUT/
