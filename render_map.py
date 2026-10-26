@@ -458,8 +458,8 @@ PALEO_REFERENCE_FRAME_CORRECTIONS = {
     # the RMS paleolatitude error of seven Brazilian margin basins (Foz do
     # Amazonas, Pará-Maranhão, Barreirinhas, Potiguar, Sergipe-Alagoas, Campos,
     # Santos) against the APWP of Vaes et al. (2023), queried through
-    # paleolatitude.org (van Hinsbergen et al., 2015). RMS error < 0.45° at
-    # every age. Evaluation script: avalia_rotacao.py (kept outside the
+    # paleolatitude.org (van Hinsbergen et al., 2015). RMS error 0.03° to
+    # 0.34° depending on the age. Evaluation script: avalia_rotacao.py (kept outside the
     # repository with the private data). Valid for South America only: seven
     # points on plate 201 and a fixed pole.
     #
