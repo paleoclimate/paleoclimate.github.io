@@ -4469,6 +4469,7 @@ def generate_index_html(dir_idw, output='index.html', knn=False):
                 if os.path.isfile(candidate):
                     pdfs[scope] = candidate
             comparison_path = f"COMPARISON/comparison_report_{age}.html"
+            burgener_path = f"COMPARISON/comparison_report_{age}_burgener.html"
             method = _extract_method_tag(h)
             maps_list.append({
                 'path': html_path,
@@ -4478,6 +4479,7 @@ def generate_index_html(dir_idw, output='index.html', knn=False):
                 'caption': _map_caption(h, method, knn=knn),
                 'pdf': pdfs,
                 'comparison': comparison_path if os.path.isfile(comparison_path) else '',
+                'burgener': burgener_path if os.path.isfile(burgener_path) else '',
             })
 
     if not maps_list:
@@ -4752,9 +4754,10 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     gap: 10px;
     flex: none;
   }
-  /* Keep the Comparison slot on every age so the header does not shift
-     when leaving 105/115 Ma. */
-  #comparisonBtn.is-absent {
+  /* Keep the Comparison and Burgener slots on every age so the header does
+     not shift when an age has no report. */
+  #comparisonBtn.is-absent,
+  #burgenerBtn.is-absent {
     visibility: hidden;
     pointer-events: none;
   }
@@ -4818,6 +4821,11 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   @media (max-width: 900px) {
     header { flex-wrap: wrap; gap: 10px 14px; }
     .divider { display: none; }
+    /* The two comparison labels do not fit one phone row: let the actions
+       wrap, and drop an absent slot instead of keeping its width. */
+    .header-actions { flex: 1 1 100%; flex-wrap: wrap; gap: 8px; }
+    #comparisonBtn.is-absent,
+    #burgenerBtn.is-absent { display: none; }
   }
 </style>
 </head>
@@ -4850,7 +4858,11 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
 
   <div class="header-actions">
     <button type="button" class="btn is-absent" id="comparisonBtn"
-            aria-hidden="true" tabindex="-1">Comparison</button>
+            title="Comparison with Hay &amp; Flögel (2012)" aria-hidden="true"
+            tabindex="-1">Comparison Hay &amp; Flögel (2012)</button>
+    <button type="button" class="btn is-absent" id="burgenerBtn"
+            title="Comparison with Burgener et al. (2023)" aria-hidden="true"
+            tabindex="-1">Comparison Burgener (2023)</button>
     <a class="btn" id="addPointBtn" href="add-point.html">Add points</a>
     <button class="btn btn-primary" id="pdfBtn" title="Export the raster area as a vector PDF (P)">
       <span class="btn-ico" aria-hidden="true">
@@ -4883,6 +4895,7 @@ var ctxAge = document.getElementById('ctxAge');
 var ctxSub = document.getElementById('ctxSub');
 var pdfBtn = document.getElementById('pdfBtn');
 var comparisonBtn = document.getElementById('comparisonBtn');
+var burgenerBtn = document.getElementById('burgenerBtn');
 var loader = document.getElementById('loader');
 var toast = document.getElementById('toast');
 
@@ -4944,6 +4957,14 @@ function closeCombo() {
   comboBtn.setAttribute('aria-expanded', 'false');
 }
 
+function setReportSlot(button, href) {
+  var present = Boolean(href);
+  button.classList.toggle('is-absent', !present);
+  button.setAttribute('aria-hidden', present ? 'false' : 'true');
+  button.tabIndex = present ? 0 : -1;
+  if (!present && document.activeElement === button) button.blur();
+}
+
 function selectMap(idx, pushHash) {
   current = clamp(idx);
   var entry = MAPS[current];
@@ -4953,11 +4974,8 @@ function selectMap(idx, pushHash) {
   pdfBtn.disabled = true;
   frame.src = entry.path;
 
-  var hasComparison = Boolean(entry.comparison);
-  comparisonBtn.classList.toggle('is-absent', !hasComparison);
-  comparisonBtn.setAttribute('aria-hidden', hasComparison ? 'false' : 'true');
-  comparisonBtn.tabIndex = hasComparison ? 0 : -1;
-  if (!hasComparison && document.activeElement === comparisonBtn) comparisonBtn.blur();
+  setReportSlot(comparisonBtn, entry.comparison);
+  setReportSlot(burgenerBtn, entry.burgener);
   if (pushHash !== false) {
     history.replaceState(null, '', '#age=' + entry.age);
   }
@@ -5084,6 +5102,10 @@ comparisonBtn.addEventListener('click', function() {
   var entry = MAPS[current];
   if (entry.comparison) window.open(entry.comparison, '_blank');
 });
+burgenerBtn.addEventListener('click', function() {
+  var entry = MAPS[current];
+  if (entry.burgener) window.open(entry.burgener, '_blank');
+});
 frame.addEventListener('load', function() {
   loader.classList.remove('on');
   pdfBtn.disabled = false;
@@ -5117,6 +5139,7 @@ def _publish_protected_site():
     commands = (
         [sys.executable, '-u', compare, 'compare'],
         [sys.executable, '-u', compare, 'compare', '--atlas', 'hay'],
+        [sys.executable, '-u', os.path.join(repo, 'compare_burgener.py'), 'compare'],
     )
     for command in commands:
         completed = subprocess.run(command, cwd=repo, env=environment)

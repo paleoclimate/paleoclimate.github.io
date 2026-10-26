@@ -112,6 +112,19 @@ python compare_floegel.py compare --age 115
 
 ---
 
+### 4. Burgener et al. (2023), sem pontos de controle
+
+Os mapas paleo-Köppen de Burgener et al. (2023), reproduzidos em Scotese et al. (2024, Figs. 89–97, CC BY 4.0), cobrem 145, 130, 120, 105, 95, 90, 85, 80 e 70 Ma. As figuras estão em `inputs/{idade}_burgener.jpg`, extraídas do PDF sem recompressão. Por serem globais e equiretangulares, a moldura preta já as georreferencia. Uma rotação e um deslocamento, ajustados entre a costa do Burgener e a nossa, compensam a diferença entre o PALEOMAP e a nossa reconstrução (ver `docs/adr/0046-burgener-comparison-georeferenced-by-frame.md`).
+
+```bash
+python compare_burgener.py compare
+python compare_burgener.py compare --age 105
+```
+
+De-para: BWh/BWk = Seco; BSh/BSk = Semi-árido; A, C e D = Úmido. O relatório traz também a nota só com a moldura (sem ajuste) e a variante As/Aw = Semi-árido. Saídas: `comparison_report_<idade>_burgener.html`, `metrics_<idade>_burgener.csv`, `classes_<idade>_burgener.png`, `warped_burgener_<idade>.png` e `burgener_summary.csv`.
+
+---
+
 ## Comandos auxiliares
 
 | Comando | Quando usar |

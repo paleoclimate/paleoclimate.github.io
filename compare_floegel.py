@@ -82,6 +82,9 @@ HSV_BINS = {
 
 AGES = ('115', '105')
 
+# Name printed in reports, CSV headers and figure titles for each published atlas.
+ATLAS_LABELS = {'floegel': 'Floegel', 'hay': 'Hay', 'burgener': 'Burgener'}
+
 # Stamped into exported gcp_<age>.json. Points picked before the reference render was
 # flipped to match the transform are in a mirrored frame and must be re-picked.
 GCP_FRAME = 'north-up-v2'
@@ -891,19 +894,20 @@ def class_area_pct(classes, mask):
 
 
 def save_metrics_csv(age, cm, metrics, ref_pct, flo_pct, atlas='floegel'):
+    label = ATLAS_LABELS[atlas]
     with open(metrics_path(age, atlas), 'w', newline='', encoding='utf-8') as f:
         w = csv.writer(f)
-        w.writerow([f'Comparacao Floegel x GeoTIFF - {age} Ma'])
+        w.writerow([f'Comparacao {label} x GeoTIFF - {age} Ma'])
         w.writerow(['Raster', os.path.basename(geotiff_path(age))])
         w.writerow([])
-        w.writerow(['Matriz de confusao (linhas=GeoTIFF, colunas=Floegel)'])
+        w.writerow([f'Matriz de confusao (linhas=GeoTIFF, colunas={label})'])
         w.writerow([''] + [CLASS_NAMES[c] for c in CLASS_ORDER])
         for i, rc in enumerate(CLASS_ORDER):
             w.writerow([CLASS_NAMES[rc]] + [int(cm[i, j]) for j in range(3)])
         w.writerow([])
         w.writerow(['Similaridade por classe'])
         w.writerow(['Classe', 'IoU (%)', 'Recall (%)', 'Precisao (%)',
-                    'Area GeoTIFF (%)', 'Area Floegel (%)'])
+                    'Area GeoTIFF (%)', f'Area {label} (%)'])
         pc = metrics.get('per_class', {})
         for c in CLASS_ORDER:
             d = pc.get(c, {})
@@ -950,8 +954,9 @@ def save_class_composite(age, ref_classes, flo_classes, mask, cm, atlas='floegel
     fig, axes = plt.subplots(1, 3, figsize=(16, 6))
     axes[0].imshow(ref_masked, cmap=cmap, vmin=0, vmax=3)
     axes[0].set_title(f'GeoTIFF (meu) - {age} Ma')
+    label = ATLAS_LABELS[atlas]
     axes[1].imshow(flo_masked, cmap=cmap, vmin=0, vmax=3)
-    axes[1].set_title('Floegel deformado (warp)')
+    axes[1].set_title(f'{label} deformado (warp)')
     for ax in axes[:2]:
         ax.axis('off')
 
@@ -960,7 +965,7 @@ def save_class_composite(age, ref_classes, flo_classes, mask, cm, atlas='floegel
     ax.set_xticks(range(3)); ax.set_yticks(range(3))
     ax.set_xticklabels([CLASS_NAMES[c] for c in CLASS_ORDER], rotation=30, ha='right')
     ax.set_yticklabels([CLASS_NAMES[c] for c in CLASS_ORDER])
-    ax.set_xlabel('Floegel'); ax.set_ylabel('GeoTIFF')
+    ax.set_xlabel(label); ax.set_ylabel('GeoTIFF')
     ax.set_title('Matriz de confusao')
     for i in range(3):
         for j in range(3):
@@ -979,7 +984,13 @@ def _pct(x):
 
 
 def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps,
-                     atlas='floegel'):
+                     atlas='floegel', method_note=None, extra_rows=''):
+    """Write the HTML report.
+
+    ``method_note`` replaces the control-point paragraph for an atlas that is not
+    warped by GCPs; ``extra_rows`` is HTML appended after the class tables.
+    Without ``method_note`` the reference render is shown, as for Floegel.
+    """
     pc = metrics.get('per_class', {})
 
     def data_uri(path):
@@ -1005,7 +1016,20 @@ def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps,
         cm_rows += f"<tr><th>{CLASS_NAMES[rc]}</th>{cells}</tr>"
     cm_header = ''.join(f"<th>{CLASS_NAMES[c]}</th>" for c in CLASS_ORDER)
     raster_name = os.path.basename(geotiff_path(age))
-    atlas_label = 'Hay' if atlas == 'hay' else 'Floegel'
+    atlas_label = ATLAS_LABELS[atlas]
+    if method_note is None:
+        method_note = (
+            f"<b>Metodo:</b> warp {warp_method} com {n_gcps} pontos de controle. O {atlas_label} foi\n"
+            "    deformado para a grade do GeoTIFF exibido no mapa; oceano/simbolos/rotulos foram ignorados. O teto\n"
+            "    de concordancia e limitado pelo descasamento real de linha de costa e projecao entre\n"
+            "    os dois mapas, alem da qualidade/numero dos pontos de controle."
+        )
+        reference_block = (
+            '<h2>Render de referencia usado</h2>\n'
+            f'  <img src="{data_uri(reference_path(age))}" alt="reference render">'
+        )
+    else:
+        reference_block = ''
 
     html = f"""<!DOCTYPE html>
 <html lang="pt-br">
@@ -1045,33 +1069,30 @@ def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps,
   </div>
 
   <div class="note">
-    <b>Raster:</b> {raster_name}. <b>Metodo:</b> warp {warp_method} com {n_gcps} pontos de controle. O {atlas_label} foi
-    deformado para a grade do GeoTIFF exibido no mapa; oceano/simbolos/rotulos foram ignorados. O teto
-    de concordancia e limitado pelo descasamento real de linha de costa e projecao entre
-    os dois mapas, alem da qualidade/numero dos pontos de controle.
+    <b>Raster:</b> {raster_name}. {method_note}
   </div>
 
   <h2>Similaridade por classe</h2>
   <table>
     <tr><th>Classe</th><th>IoU</th><th>Recall</th><th>Precisao</th>
-        <th>Area GeoTIFF</th><th>Area Floegel</th></tr>
+        <th>Area GeoTIFF</th><th>Area {atlas_label}</th></tr>
     {rows_class}
   </table>
 
-  <h2>Matriz de confusao (linhas = GeoTIFF, colunas = Floegel)</h2>
+  <h2>Matriz de confusao (linhas = GeoTIFF, colunas = {atlas_label})</h2>
   <table>
     <tr><th></th>{cm_header}</tr>
     {cm_rows}
   </table>
+  {extra_rows}
 
   <h2>Mapas de classe e matriz</h2>
   <img src="{data_uri(classes_path(age, atlas))}" alt="composite">
 
-  <h2>Floegel deformado (validacao visual do alinhamento)</h2>
+  <h2>{atlas_label} deformado (validacao visual do alinhamento)</h2>
   <img src="{data_uri(warped_path(age, atlas))}" alt="warped {atlas}">
 
-  <h2>Render de referencia usado</h2>
-  <img src="{data_uri(reference_path(age))}" alt="reference render">
+  {reference_block}
 </div>
 </body>
 </html>"""
@@ -1081,24 +1102,32 @@ def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps,
     print(f"[compare] report -> {report_path(age, atlas)}")
 
 
+BURGENER_INDEX_AGES = ('70', '80', '85', '90', '95', '105', '120', '130', '145')
+
+
 def generate_comparison_index():
+    """List every report on disk: Floegel first, then Burgener by age."""
     items = []
     for age in AGES:
         if os.path.exists(report_path(age)):
-            items.append((age, os.path.basename(report_path(age))))
+            items.append((age, 'floegel'))
+    for age in BURGENER_INDEX_AGES:
+        if os.path.exists(report_path(age, 'burgener')):
+            items.append((age, 'burgener'))
     if not items:
         return
     links = '\n'.join(
-        f'<li><a href="{fn}">Comparacao {age} Ma</a> '
-        f'(<a href="{os.path.basename(metrics_path(age))}">CSV</a>)</li>'
-        for age, fn in items
+        f'<li><a href="{os.path.basename(report_path(age, atlas))}">'
+        f'{"Comparacao" if atlas == "floegel" else ATLAS_LABELS[atlas]} {age} Ma</a> '
+        f'(<a href="{os.path.basename(metrics_path(age, atlas))}">CSV</a>)</li>'
+        for age, atlas in items
     )
     html = f"""<!DOCTYPE html>
 <html lang="pt-br"><head><meta charset="UTF-8">
-<title>Comparacoes Floegel x GeoTIFF</title>
+<title>Comparacoes com atlas publicados x GeoTIFF</title>
 <style>body{{font-family:Arial;margin:40px;color:#2c3e50}}
 h1{{font-size:22px}} li{{margin:8px 0;font-size:15px}}</style></head>
-<body><h1>Comparacoes de similaridade - Floegel x GeoTIFF</h1>
+<body><h1>Comparacoes de similaridade - Floegel e Burgener x GeoTIFF</h1>
 <ul>{links}</ul></body></html>"""
     out = os.path.join(COMP_DIR, 'index_comparison.html')
     with open(out, 'w', encoding='utf-8') as f:

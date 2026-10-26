@@ -173,6 +173,16 @@ Workflow (detailed instructions in [`COMPARISON/README.md`](COMPARISON/README.md
 
 Results: open `COMPARISON/index_comparison.html` for HTML reports and CSV metrics.
 
+## Comparison with Burgener et al. (2023) palaeo-Köppen maps
+
+For **70, 80, 85, 90, 95, 105, 120, 130 and 145 Ma**, the generated maps are compared with the Burgener et al. (2023) palaeo-Köppen maps reprinted in Scotese et al. (2024, Figs. 89–97, CC BY 4.0). The figures are global equirectangular plates, so their frame georeferences them and no control points are needed; a rotation and shift fitted on the shoreline takes up the difference between PALEOMAP and our reconstruction (`docs/adr/0046-burgener-comparison-georeferenced-by-frame.md`).
+
+```bash
+python compare_burgener.py compare
+```
+
+Each age gets `COMPARISON/comparison_report_{age}_burgener.html` and `metrics_{age}_burgener.csv`; `COMPARISON/burgener_summary.csv` has one row per age. The viewer shows a **Comparison Burgener (2023)** button for those ages, next to **Comparison Hay & Flögel (2012)** at 105 and 115 Ma.
+
 ## Notes
 
 - The map opens framed on the interpolated raster area
