@@ -1,6 +1,6 @@
 # Comparação Floegel × GeoTIFF
 
-Este diretório contém o fluxo de **similaridade espacial** entre os mapas de referência publicados (Floegel) e os mapas gerados pelo projeto (GeoTIFF KNN+IDW). O script responsável é `compare_floegel.py`, na raiz do repositório.
+Este diretório contém o fluxo de **similaridade espacial** entre os mapas de referência publicados (Floegel) e os mapas gerados pelo projeto (GeoTIFF do IDW ponderado por classe). O script responsável é `compare_floegel.py`, na raiz do repositório.
 
 Idades suportadas: **105 Ma** e **115 Ma**.
 

@@ -30,9 +30,11 @@ pip install -r requirements.txt
 ## Usage
 
 Run the script to generate the interactive maps. The published candidate
-condenses data points at 0.5°, reclassifies each interpolator anchor from
-the 8 nearest others (KNN, same power), then paints an indicator IDW
-(power 4, every anchor, no snap disk). Each class's share of the IDW weight
+condenses data points at 0.5°, adds the expert conceptual maps as
+weight-0.5 anchors on a 5° grid, applies the per-age reference-frame rotation,
+then paints an indicator IDW per class (weight / d⁴, every anchor, no snap
+disk). The KNN reclassification of the anchors survives only as the
+discarded `--knn` option (ADR 0044). Each class's share of the IDW weight
 is blurred with a 2° Gaussian before the winner is picked, so zone borders
 come out round instead of following the anchor grid; around an anchor whose
 zone that would erase, the blur steps down until the anchor keeps its class.
@@ -129,8 +131,9 @@ For every dataset in `GEOJSON/`, the script generates:
 
 Data points are condensed at 0.5° in source coordinates before the paleo-frame
 rotation. Conceptual points skip that cluster and still anchor the raster.
-Each anchor is then reclassified from its 8 nearest neighbors. Markers on
-the map stay on the original citations.
+Anchors keep their own class: the weighted class IDW replaces the old KNN
+reclassification, which remains only as the discarded `--knn` option
+(ADR 0044). Markers on the map stay on the original citations.
 
 ## PDF export
 
