@@ -103,12 +103,12 @@ def test_frame_warp_puts_a_block_on_its_raster_cells():
     assert warped[100, 100] == 0
 
 
-def test_shoreline_fit_recovers_a_known_offset(monkeypatch):
+def _l_continent_and_coastline(shift):
+    """Figure with an L-shaped continent and a coastline drawer offset by ``shift``."""
     rgb, frame = _global_figure()
     # An L-shaped continent, so no rotation maps it onto itself.
     _paint(rgb, frame, -45, -15, -35, -25, _legend('Ca'))
     _paint(rgb, frame, -45, -35, -25, -5, _legend('Ca'))
-    shift = (4.0, -3.0)                        # our continent sits 4E, 3S of theirs
 
     def fake_coastline(image, meta, age):
         inverse = ~meta['transform']
@@ -120,13 +120,41 @@ def test_shoreline_fit_recovers_a_known_offset(monkeypatch):
         cv2.polylines(image, [np.array(pts, np.int32)], True, (0, 0, 0), 1)
         return image
 
+    return rgb, frame, fake_coastline
+
+
+def test_shoreline_fit_recovers_a_known_offset(monkeypatch):
+    shift = (4.0, -3.0)                        # our continent sits 4E, 3S of theirs
+    rgb, frame, fake_coastline = _l_continent_and_coastline(shift)
     monkeypatch.setattr(burgener.cf, 'draw_coastline', fake_coastline)
     meta = _meta(-70.0, 15.0, 800, 700)
-    params, before, after = burgener.fit_shoreline('105', rgb, frame, meta)
+    params, before, after = burgener.fit_shoreline(
+        '105', burgener.land_mask(rgb, frame), burgener.frame_plate(frame), meta)
     assert params[0] == pytest.approx(0.0, abs=0.5)
     assert params[1] == pytest.approx(shift[0], abs=0.4)
     assert params[2] == pytest.approx(shift[1], abs=0.4)
     assert after < before
+
+
+def test_coarse_scan_finds_a_large_offset(monkeypatch):
+    shift = (30.0, -12.0)                      # far outside the +-15 degree fine search
+    rgb, frame, fake_coastline = _l_continent_and_coastline(shift)
+    monkeypatch.setattr(burgener.cf, 'draw_coastline', fake_coastline)
+    meta = _meta(-50.0, 10.0, 800, 700)
+    params, _before, after = burgener.fit_shoreline(
+        '105', burgener.land_mask(rgb, frame), burgener.frame_plate(frame), meta,
+        coarse=((-45.0, 45.0), (-30.0, 30.0)))
+    assert params[1] == pytest.approx(shift[0], abs=0.5)
+    assert params[2] == pytest.approx(shift[1], abs=0.5)
+    assert after < 0.3
+
+
+def test_plate_carree_round_trips():
+    plate = burgener.PlateCarree(12, 7, 0.25, 0.25, west=-170.0, north=88.0)
+    lon, lat = plate.to_lonlat(np.array([12.0, 52.0]), np.array([7.0, 47.0]))
+    assert np.allclose(lon, [-170.0, -160.0]) and np.allclose(lat, [88.0, 78.0])
+    x, y = plate.to_pixel(lon, lat)
+    assert np.allclose(x, [12, 52]) and np.allclose(y, [7, 47])
 
 
 def test_viewer_template_has_the_burgener_slot():

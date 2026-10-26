@@ -82,6 +82,7 @@ FIT_STARTS = [(t, x, y) for t in (-10.0, 0.0, 10.0)
               for x in (-8.0, 0.0, 8.0) for y in (-8.0, 0.0, 8.0)]
 FIT_MAX_ROTATION = 20.0
 FIT_MAX_SHIFT = 15.0
+COARSE_CANDIDATES = 3       # separated minima of a coarse scan refined by Powell
 
 
 def image_path(age):
@@ -113,16 +114,43 @@ def find_frame(rgb):
     return int(cols.min()), int(cols.max()), int(rows.min()), int(rows.max())
 
 
-def pixel_to_lonlat(frame, xs, ys):
+class PlateCarree:
+    """Linear pixel <-> lon/lat mapping of an equirectangular figure.
+
+    Pixel (x0, y0) is (west, north); ``dx``/``dy`` are degrees per pixel. The
+    corner is provisional when the figure has no labels: the shoreline fit then
+    finds the offset.
+    """
+
+    def __init__(self, x0, y0, dx, dy, west=-180.0, north=90.0):
+        self.x0, self.y0, self.dx, self.dy = float(x0), float(y0), float(dx), float(dy)
+        self.west, self.north = float(west), float(north)
+
+    def to_lonlat(self, xs, ys):
+        return (self.west + (np.asarray(xs) - self.x0) * self.dx,
+                self.north - (np.asarray(ys) - self.y0) * self.dy)
+
+    def to_pixel(self, lons, lats):
+        return (self.x0 + (np.asarray(lons) - self.west) / self.dx,
+                self.y0 + (self.north - np.asarray(lats)) / self.dy)
+
+    def as_dict(self):
+        return dict(x0=self.x0, y0=self.y0, dx=self.dx, dy=self.dy,
+                    west=self.west, north=self.north)
+
+
+def frame_plate(frame):
+    """Global plate whose black frame spans 180 W-180 E and 90 N-90 S (Burgener)."""
     x0, x1, y0, y1 = frame
-    return (-180.0 + (np.asarray(xs) - x0) / (x1 - x0) * 360.0,
-            90.0 - (np.asarray(ys) - y0) / (y1 - y0) * 180.0)
+    return PlateCarree(x0, y0, 360.0 / (x1 - x0), 180.0 / (y1 - y0))
+
+
+def pixel_to_lonlat(frame, xs, ys):
+    return frame_plate(frame).to_lonlat(xs, ys)
 
 
 def lonlat_to_pixel(frame, lons, lats):
-    x0, x1, y0, y1 = frame
-    return (x0 + (np.asarray(lons) + 180.0) / 360.0 * (x1 - x0),
-            y0 + (90.0 - np.asarray(lats)) / 180.0 * (y1 - y0))
+    return frame_plate(frame).to_pixel(lons, lats)
 
 
 def _lab(colors):
@@ -220,12 +248,24 @@ class _ShoreGrid:
         return d
 
 
-def fit_shoreline(age, rgb, frame, meta):
-    """Rotation (deg) and shift (deg) that lay the Burgener shore on our coastline.
+def shore_edge(land):
+    """Pixels on the boundary of a land mask."""
+    return cv2.morphologyEx(land.astype(np.uint8), cv2.MORPH_GRADIENT,
+                            np.ones((3, 3), np.uint8)) > 0
 
-    The cost is the symmetric truncated chamfer distance: Burgener shore to our
-    coastline plus our coastline to the Burgener shore, both inside the raster
-    window. One direction alone lets the map slide onto any dense stretch of shore.
+
+def fit_shoreline(age, land, plate, meta, around=(0.0, 0.0, 0.0), coarse=False):
+    """Rotation (deg) and shift (deg) that lay the atlas shore on our coastline.
+
+    ``land`` is the atlas land mask in figure pixels and ``plate`` its
+    PlateCarree. The cost is the symmetric truncated chamfer distance: atlas
+    shore that lands in the raster window to our coastline, plus our coastline
+    in the window to the atlas shore. One direction alone lets the map slide
+    onto any dense stretch of shore. Powell searches +-FIT_MAX_ROTATION and
+    +-FIT_MAX_SHIFT around ``around``. With ``coarse`` (lon range, lat range)
+    the shift is first scanned in 2 degree steps without rotation, for a figure
+    whose corner is only approximately known; the best COARSE_CANDIDATES
+    separated minima are each refined and the lowest cost wins.
     Returns (params, distance_before, distance_after), distances in degrees.
     """
     b = meta['bounds']
@@ -246,53 +286,93 @@ def fit_shoreline(age, rgb, frame, meta):
               & (our_lats >= b.bottom) & (our_lats <= b.top))
     our_lons, our_lats = our_lons[inside], our_lats[inside]
 
-    # Burgener shoreline: edge of its land mask, resampled on the same grid.
-    land = land_mask(rgb, frame).astype(np.uint8)
-    edge = cv2.morphologyEx(land, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8)) > 0
-    grid_lons, grid_lats = np.meshgrid(lon_axis, lat_axis)
-    px, py = lonlat_to_pixel(frame, grid_lons, grid_lats)
+    # Atlas shoreline on a lon/lat grid: the raster window plus its margin for a
+    # georeferenced figure, the whole figure when the offset is scanned.
+    edge = shore_edge(land)
+    if coarse:
+        fh, fw = land.shape
+        f_west, f_north = plate.to_lonlat(0, 0)
+        f_east, f_south = plate.to_lonlat(fw, fh)
+        g_width = int(np.ceil((f_east - f_west) / FIT_RES))
+        g_height = int(np.ceil((f_north - f_south) / FIT_RES))
+    else:
+        f_west, f_north, g_width, g_height = west, north, width, height
+    g_lons, g_lats = np.meshgrid(f_west + (np.arange(g_width) + 0.5) * FIT_RES,
+                                 f_north - (np.arange(g_height) + 0.5) * FIT_RES)
+    px, py = plate.to_pixel(g_lons, g_lats)
     theirs = cv2.remap(edge.astype(np.uint8), px.astype(np.float32), py.astype(np.float32),
                        interpolation=cv2.INTER_NEAREST, borderValue=0) > 0
-    theirs_grid = _ShoreGrid(theirs, west, north)
+    theirs_grid = _ShoreGrid(theirs, f_west, f_north)
     rows, cols = np.nonzero(theirs)
-    lons, lats = lon_axis[cols], lat_axis[rows]
-    keep = ((lons > b.left - FIT_WINDOW_PAD) & (lons < b.right + FIT_WINDOW_PAD)
-            & (lats > b.bottom - FIT_WINDOW_PAD) & (lats < b.top + FIT_WINDOW_PAD))
-    lons, lats = lons[keep], lats[keep]
-    if lons.size < 100 or our_lons.size < 100:
-        raise RuntimeError(f'{age} Ma: too little shoreline in the raster window')
+    lons, lats = g_lons[rows, cols], g_lats[rows, cols]
+    if our_lons.size < 100:
+        raise RuntimeError(f'{age} Ma: too little of our coastline in the raster window')
     center = window_center(meta)
+
+    def near_window(x, y):
+        return ((x > b.left - FIT_WINDOW_PAD) & (x < b.right + FIT_WINDOW_PAD)
+                & (y > b.bottom - FIT_WINDOW_PAD) & (y < b.top + FIT_WINDOW_PAD))
+
+    if not coarse:
+        # A georeferenced figure: the atlas shore in the window is fixed before the fit.
+        fixed = near_window(lons, lats)
+        lons, lats = lons[fixed], lats[fixed]
+        if lons.size < 100:
+            raise RuntimeError(f'{age} Ma: too little atlas shoreline in the raster window')
 
     def cost(params):
         x, y = _rotate_shift(params, center, lons, lats)
-        forward = ours_grid.lookup(x, y).mean()
+        near = near_window(x, y) if coarse else np.ones(x.shape, dtype=bool)
+        forward = ours_grid.lookup(x[near], y[near]).mean() if near.sum() >= 100 else FIT_TRUNCATE
         x, y = _unrotate_shift(params, center, our_lons, our_lats)
         backward = theirs_grid.lookup(x, y).mean()
         return float((forward + backward) / 2.0)
 
-    limits = [(-FIT_MAX_ROTATION, FIT_MAX_ROTATION),
-              (-FIT_MAX_SHIFT, FIT_MAX_SHIFT), (-FIT_MAX_SHIFT, FIT_MAX_SHIFT)]
-    best = None
-    for start in FIT_STARTS:
-        result = minimize(cost, start, method='Powell', bounds=limits,
-                          options={'xtol': 0.01, 'ftol': 1e-4})
-        if best is None or result.fun < best.fun:
-            best = result
+    centers = [around]
+    starts = FIT_STARTS
+    if coarse:
+        (lon_lo, lon_hi), (lat_lo, lat_hi) = coarse
+        scan = sorted((cost((0.0, dx, dy)), float(dx), float(dy))
+                      for dx in np.arange(lon_lo, lon_hi + 0.1, 2.0)
+                      for dy in np.arange(lat_lo, lat_hi + 0.1, 2.0))
+        centers = []
+        for _c, dx, dy in scan:
+            if all(abs(dx - c[1]) > FIT_MAX_SHIFT or abs(dy - c[2]) > FIT_MAX_SHIFT for c in centers):
+                centers.append((0.0, dx, dy))
+            if len(centers) == COARSE_CANDIDATES:
+                break
+        starts = [(t, 0.0, 0.0) for t in (-10.0, 0.0, 10.0)]
+    best, best_limits = None, None
+    for center_params in centers:
+        limits = [(center_params[0] - FIT_MAX_ROTATION, center_params[0] + FIT_MAX_ROTATION),
+                  (center_params[1] - FIT_MAX_SHIFT, center_params[1] + FIT_MAX_SHIFT),
+                  (center_params[2] - FIT_MAX_SHIFT, center_params[2] + FIT_MAX_SHIFT)]
+        for start in starts:
+            start = tuple(a + s for a, s in zip(center_params, start))
+            result = minimize(cost, start, method='Powell', bounds=limits,
+                              options={'xtol': 0.01, 'ftol': 1e-4})
+            if best is None or result.fun < best.fun:
+                best, best_limits = result, limits
     params = tuple(float(p) for p in best.x)
-    if any(abs(value) > high - 0.05 for value, (_low, high) in zip(params, limits)):
+    if any(min(value - low, high - value) < 0.05 for value, (low, high) in zip(params, best_limits)):
         raise RuntimeError(f'{age} Ma: shoreline fit stopped at the search limit {params}')
     return params, cost((0.0, 0.0, 0.0)), float(best.fun)
 
 
-def warp_to_raster(rgb, frame, meta, params=None):
-    """Sample the Burgener image on the class raster's grid (nearest neighbour)."""
+def warp_to_raster(rgb, plate, meta, params=None):
+    """Sample a figure on the class raster's grid (nearest neighbour).
+
+    ``plate`` is a PlateCarree, or a Burgener frame tuple.
+    """
+    if not isinstance(plate, PlateCarree):
+        plate = frame_plate(plate)
     transform = meta['transform']
     cols, rows = np.meshgrid(np.arange(meta['width']) + 0.5, np.arange(meta['height']) + 0.5)
     lons = transform.c + cols * transform.a
     lats = transform.f + rows * transform.e
     if params is not None:
         lons, lats = _unrotate_shift(params, window_center(meta), lons, lats)
-    px, py = lonlat_to_pixel(frame, lons, lats)
+    px, py = plate.to_pixel(lons, lats)
     border = (255, 255, 255) if rgb.ndim == 3 else 0
     warped = cv2.remap(rgb, px.astype(np.float32), py.astype(np.float32),
                        interpolation=cv2.INTER_NEAREST,
@@ -350,7 +430,7 @@ def score_age(age):
     rgb = load_image(age)
     frame = find_frame(rgb)
     ref_classes, meta = cf.geotiff_classes(age)
-    params, before, after = fit_shoreline(age, rgb, frame, meta)
+    params, before, after = fit_shoreline(age, land_mask(rgb, frame), frame_plate(frame), meta)
 
     atlas_classes, mask, cm, metrics = score(ref_classes, rgb, frame, meta, params)
     _c, _m, _cm, frame_metrics = score(ref_classes, rgb, frame, meta)
