@@ -1103,12 +1103,14 @@ def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps,
 
 
 BURGENER_INDEX_AGES = ('70', '80', '85', '90', '95', '105', '120', '130', '145')
+# Hay & Floegel (2012) ages scored by shoreline fit in compare_chumakov.py.
+CHUMAKOV_INDEX_AGES = ('70', '85', '95', '140')
 
 
 def generate_comparison_index():
-    """List every report on disk: Floegel first, then Burgener by age."""
+    """List every report on disk: Hay & Floegel first, then Burgener by age."""
     items = []
-    for age in AGES:
+    for age in sorted(set(AGES) | set(CHUMAKOV_INDEX_AGES), key=int, reverse=True):
         if os.path.exists(report_path(age)):
             items.append((age, 'floegel'))
     for age in BURGENER_INDEX_AGES:

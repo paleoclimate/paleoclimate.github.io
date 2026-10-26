@@ -173,6 +173,12 @@ Workflow (detailed instructions in [`COMPARISON/README.md`](COMPARISON/README.md
 
 Results: open `COMPARISON/index_comparison.html` for HTML reports and CSV metrics.
 
+The Floegel maps are the Chumakov et al. (1995) climate-zone maps reprinted in Hay & Floegel (2012, Earth-Science Reviews 115). The other four maps of that paper (Berriasian, Cenomanian, Santonian, Maastrichtian) are scored at **140, 95, 85 and 70 Ma** without control points: the 30° graticule gives the scale and a shoreline fit gives the position (`docs/adr/0048-hay-floegel-stages-scored-by-shoreline-fit.md`).
+
+```bash
+python compare_chumakov.py compare            # uses the committed crops
+```
+
 ## Comparison with Burgener et al. (2023) palaeo-Köppen maps
 
 For **70, 80, 85, 90, 95, 105, 120, 130 and 145 Ma**, the generated maps are compared with the Burgener et al. (2023) palaeo-Köppen maps reprinted in Scotese et al. (2024, Figs. 89–97, CC BY 4.0). The figures are global equirectangular plates, so their frame georeferences them and no control points are needed; a rotation and shift fitted on the shoreline takes up the difference between PALEOMAP and our reconstruction (`docs/adr/0046-burgener-comparison-georeferenced-by-frame.md`).
@@ -181,7 +187,7 @@ For **70, 80, 85, 90, 95, 105, 120, 130 and 145 Ma**, the generated maps are com
 python compare_burgener.py compare
 ```
 
-Each age gets `COMPARISON/comparison_report_{age}_burgener.html` and `metrics_{age}_burgener.csv`; `COMPARISON/burgener_summary.csv` has one row per age. The viewer shows a **Comparison Burgener (2023)** button for those ages, next to **Comparison Hay & Flögel (2012)** at 105 and 115 Ma.
+Each age gets `COMPARISON/comparison_report_{age}_burgener.html` and `metrics_{age}_burgener.csv`; `COMPARISON/burgener_summary.csv` has one row per age. The viewer shows a **Comparison Burgener (2023)** button for those ages, next to **Comparison Hay & Flögel (2012)** at 70, 85, 95, 105, 115 and 140 Ma.
 
 ## Notes
 

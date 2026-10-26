@@ -1,0 +1,128 @@
+{
+ "105": {
+  "dpi": 200,
+  "figure": 4,
+  "fit": [
+   1.17,
+   9.789,
+   0.309
+  ],
+  "graticule_px": 129.67,
+  "plate": {
+   "dx": 0.23136246786632392,
+   "dy": 0.23136246786632392,
+   "north": 90.0,
+   "west": -180.0,
+   "x0": -339.0,
+   "y0": -152.0
+  },
+  "shore_distance_after_deg": 1.517,
+  "shore_distance_before_deg": 2.303,
+  "stage": "Albian"
+ },
+ "115": {
+  "dpi": 200,
+  "figure": 3,
+  "fit": [
+   -0.365,
+   -14.233,
+   2.27
+  ],
+  "graticule_px": 119.17,
+  "plate": {
+   "dx": 0.2517482517482517,
+   "dy": 0.2517482517482517,
+   "north": 90.0,
+   "west": -180.0,
+   "x0": -405.0,
+   "y0": -170.0
+  },
+  "shore_distance_after_deg": 1.528,
+  "shore_distance_before_deg": 2.394,
+  "stage": "Aptian"
+ },
+ "140": {
+  "dpi": 200,
+  "figure": 2,
+  "fit": [
+   2.277,
+   -12.588,
+   9.962
+  ],
+  "graticule_px": 119.2,
+  "plate": {
+   "dx": 0.25167785234899326,
+   "dy": 0.25167785234899326,
+   "north": 90.0,
+   "west": -180.0,
+   "x0": -402.0,
+   "y0": -196.0
+  },
+  "shore_distance_after_deg": 1.683,
+  "shore_distance_before_deg": 2.275,
+  "stage": "Berriasian"
+ },
+ "70": {
+  "dpi": 200,
+  "figure": 7,
+  "fit": [
+   -2.691,
+   -4.794,
+   -1.726
+  ],
+  "graticule_px": 121.0,
+  "plate": {
+   "dx": 0.24793388429752067,
+   "dy": 0.24793388429752067,
+   "north": 90.0,
+   "west": -180.0,
+   "x0": -344.0,
+   "y0": -86.0
+  },
+  "shore_distance_after_deg": 1.772,
+  "shore_distance_before_deg": 2.111,
+  "stage": "Maastrichtian"
+ },
+ "85": {
+  "dpi": 200,
+  "figure": 6,
+  "fit": [
+   1.875,
+   -14.903,
+   -1.121
+  ],
+  "graticule_px": 119.0,
+  "plate": {
+   "dx": 0.25210084033613445,
+   "dy": 0.25210084033613445,
+   "north": 90.0,
+   "west": -180.0,
+   "x0": -386.0,
+   "y0": -113.0
+  },
+  "shore_distance_after_deg": 1.513,
+  "shore_distance_before_deg": 2.367,
+  "stage": "Santonian"
+ },
+ "95": {
+  "dpi": 200,
+  "figure": 5,
+  "fit": [
+   -1.947,
+   -15.208,
+   3.629
+  ],
+  "graticule_px": 118.67,
+  "plate": {
+   "dx": 0.25280898876404495,
+   "dy": 0.25280898876404495,
+   "north": 90.0,
+   "west": -180.0,
+   "x0": -389.0,
+   "y0": -147.0
+  },
+  "shore_distance_after_deg": 1.616,
+  "shore_distance_before_deg": 2.44,
+  "stage": "Cenomanian"
+ }
+}

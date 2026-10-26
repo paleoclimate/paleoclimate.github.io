@@ -5129,8 +5129,11 @@ setTimeout(function () { selectMap(initialIndex(), false); }, 0);
 </body>
 </html>"""
 
-def _publish_protected_site():
-    """Rescore Hay/Floegel on the new rasters, then encrypt the published HTML."""
+def _rescore_comparisons():
+    """Rescore the published atlases (Hay & Floegel, Burgener) on the new rasters.
+
+    Runs before index.html is written, so the viewer links every report that exists.
+    """
     repo = os.path.dirname(os.path.abspath(__file__))
     compare = os.path.join(repo, 'compare_floegel.py')
     environment = os.environ.copy()
@@ -5139,6 +5142,7 @@ def _publish_protected_site():
     commands = (
         [sys.executable, '-u', compare, 'compare'],
         [sys.executable, '-u', compare, 'compare', '--atlas', 'hay'],
+        [sys.executable, '-u', os.path.join(repo, 'compare_chumakov.py'), 'compare'],
         [sys.executable, '-u', os.path.join(repo, 'compare_burgener.py'), 'compare'],
     )
     for command in commands:
@@ -5147,6 +5151,10 @@ def _publish_protected_site():
             completed = subprocess.run(command, cwd=repo, env=environment)
         if completed.returncode != 0:
             raise SystemExit('Comparison failed ({})'.format(' '.join(command)))
+
+
+def _publish_protected_site():
+    """Encrypt the published HTML."""
     from encrypt_site import encrypt_published
     encrypt_published()
 
@@ -5472,6 +5480,7 @@ def main():
     for f in generated:
         print(f"  {f}")
 
+    _rescore_comparisons()
     with StepTimer("Generate index.html", indent=0) as t:
         generate_index_html(dir_idw_maps, knn=args.knn)
     _publish_protected_site()
