@@ -303,11 +303,10 @@ def classify_floegel(rgb_image, prototypes, valid_mask=None):
 # ---------------------------------------------------------------------------
 
 def geotiff_values(age):
-    """Read the GeoTIFF band in the same orientation as its transform.
+    """Read the GeoTIFF band as stored.
 
-    create_idw_raster fills rows south->north but stamps a north-up transform, and
-    render_map compensates with a flip only when drawing. Flipping on read keeps the
-    raster, the coastline and the published map in one frame.
+    The rasters are written north-up (row 0 = north), matching their transform, so
+    the raster, the coastline and the published map share one frame with no flip.
     """
     with rasterio.open(geotiff_path(age)) as src:
         data = src.read(1).astype(np.float64)
@@ -318,7 +317,7 @@ def geotiff_values(age):
             'height': data.shape[0],
             'width': data.shape[1],
         }
-    return np.flipud(data), meta
+    return data, meta
 
 
 def geotiff_render(age):

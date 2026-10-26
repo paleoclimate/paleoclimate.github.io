@@ -1967,7 +1967,8 @@ def create_indicator_raster(points, values, output_path, resolution=0.1, power=1
         transform=transform,
         compress='lzw',
     ) as dst:
-        dst.write(grid_values, 1)
+        # grid_lats runs south->north; a GeoTIFF's row 0 is the north edge
+        dst.write(np.flipud(grid_values), 1)
     print(f"Indicator IDW raster saved to: {output_path}")
     if confidence_path:
         confidence = shares.max(axis=0).astype(np.float32)
@@ -1978,7 +1979,7 @@ def create_indicator_raster(points, values, output_path, resolution=0.1, power=1
             confidence_path, 'w', driver='GTiff', height=len(grid_lats), width=len(grid_lons),
             count=1, dtype=confidence.dtype, crs='EPSG:4326', transform=transform, compress='lzw',
         ) as dst:
-            dst.write(confidence, 1)
+            dst.write(np.flipud(confidence), 1)
         print(f"Confidence raster saved to: {confidence_path}")
     return output_path
 
@@ -2280,7 +2281,8 @@ def create_idw_raster(points_data, output_path, resolution=0.1, power=2, n_neigh
         transform=transform,
         compress='lzw'
     ) as dst:
-        dst.write(grid_values, 1)
+        # grid_lats runs south->north; a GeoTIFF's row 0 is the north edge
+        dst.write(np.flipud(grid_values), 1)
     
     print(f"IDW raster saved to: {output_path}")
     return output_path
@@ -2409,9 +2411,7 @@ def create_raster_overlay(geotiff_path, map_obj, raster_img_path='raster_overlay
             )
             print(f"Color range - {channel_ranges}")
 
-            # Flip image vertically because raster origin is top-left but geographic is bottom-left
-            rgba = np.flipud(rgba)
-
+            # Rasters are written north-up (row 0 = north), the same as the image.
             img_colored = Image.fromarray(rgba, mode='RGBA')
             
             # Save to a permanent location
