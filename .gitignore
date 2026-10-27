@@ -2,3 +2,18 @@ backup/
 GEOJSON/
 __pycache__/
 node_modules/
+
+# Rasters de confiança revelam a posição dos dados; ficam só locais
+GENERATED_CONFIDENCE/
+
+# Resultados da validacao (metricas por idade derivadas dos dados privados)
+VALIDATION_OUT/
+
+# Hay & Floegel (2012) e (c) Elsevier, sem acesso aberto: scans, recortes e imagens
+# derivadas ficam so locais (ADR 0049). Regerar com compare_chumakov.py extract a partir do PDF.
+COMPARISON/inputs/*_floegel.png
+COMPARISON/inputs/*_hay.png
+COMPARISON/inputs/*_chumakov.png
+COMPARISON/inputs/legenda.png
+COMPARISON/warped_floegel_*.png
+COMPARISON/gcp_picker.html

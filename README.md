@@ -30,9 +30,11 @@ pip install -r requirements.txt
 ## Usage
 
 Run the script to generate the interactive maps. The published candidate
-condenses data points at 0.5°, reclassifies each interpolator anchor from
-the 8 nearest others (KNN, same power), then paints an indicator IDW
-(power 4, every anchor, no snap disk). Each class's share of the IDW weight
+condenses data points at 0.5°, adds the expert conceptual maps as
+weight-0.5 anchors on a 5° grid, applies the per-age reference-frame rotation,
+then paints an indicator IDW per class (weight / d⁴, every anchor, no snap
+disk). The KNN reclassification of the anchors survives only as the
+discarded `--knn` option (ADR 0044). Each class's share of the IDW weight
 is blurred with a 2° Gaussian before the winner is picked, so zone borders
 come out round instead of following the anchor grid; around an anchor whose
 zone that would erase, the blur steps down until the anchor keeps its class.
@@ -129,8 +131,9 @@ For every dataset in `GEOJSON/`, the script generates:
 
 Data points are condensed at 0.5° in source coordinates before the paleo-frame
 rotation. Conceptual points skip that cluster and still anchor the raster.
-Each anchor is then reclassified from its 8 nearest neighbors. Markers on
-the map stay on the original citations.
+Anchors keep their own class: the weighted class IDW replaces the old KNN
+reclassification, which remains only as the discarded `--knn` option
+(ADR 0044). Markers on the map stay on the original citations.
 
 ## PDF export
 
@@ -169,6 +172,23 @@ Workflow (detailed instructions in [`COMPARISON/README.md`](COMPARISON/README.md
    ```
 
 Results: open `COMPARISON/index_comparison.html` for HTML reports and CSV metrics.
+
+The Floegel maps are the Chumakov et al. (1995) climate-zone maps reprinted in Hay & Floegel (2012, Earth-Science Reviews 115). The other four maps of that paper (Berriasian, Cenomanian, Santonian, Maastrichtian) are scored at **140, 95, 85 and 70 Ma** without control points: the 30° graticule gives the scale and a shoreline fit gives the position (`docs/adr/0048-hay-floegel-stages-scored-by-shoreline-fit.md`).
+
+```bash
+python compare_chumakov.py extract --pdf "<Hay & Floegel 2012>.pdf"   # once: local crops (Elsevier, not committed)
+python compare_chumakov.py compare
+```
+
+## Comparison with Burgener et al. (2023) palaeo-Köppen maps
+
+For **70, 80, 85, 90, 95, 105, 120, 130 and 145 Ma**, the generated maps are compared with the Burgener et al. (2023) palaeo-Köppen maps reprinted in Scotese et al. (2024, Figs. 89–97, CC BY 4.0). The figures are global equirectangular plates, so their frame georeferences them and no control points are needed; a rotation and shift fitted on the shoreline takes up the difference between PALEOMAP and our reconstruction (`docs/adr/0046-burgener-comparison-georeferenced-by-frame.md`).
+
+```bash
+python compare_burgener.py compare
+```
+
+Each age gets `COMPARISON/comparison_report_{age}_burgener.html` and `metrics_{age}_burgener.csv`; `COMPARISON/burgener_summary.csv` has one row per age. The viewer shows a **Comparison Burgener (2023)** button for those ages, next to **Comparison Hay & Flögel (2012)** at 70, 85, 95, 105, 115 and 140 Ma.
 
 ## Notes
 

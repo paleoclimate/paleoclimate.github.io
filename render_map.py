@@ -136,8 +136,19 @@ CLASS_TIE_PRIORITY = ('D', 'H', 'S')
 # inverse-distance mean of this many other anchors, at the same power as the IDW.
 KNN_NEIGHBORS = 8
 
+# Anchor weights. A condensed anchor carries the mean reliability (``Weight``,
+# 1 to 10, from the research group's list of paleo-indicators) of the citations
+# that won its vote: the mean, not the sum, so stacked citations do not pull the
+# surface. A conceptual anchor is an interpretation, not an observation, and
+# carries half the weight of the least reliable citation.
+CONCEPTUAL_ANCHOR_WEIGHT = 0.5
+DEFAULT_CITATION_WEIGHT = 1.0
+ANCHOR_WEIGHT_KEY = 'anchor_weight'
+WEIGHTED_IDW_CAPTION = 'Reliability-weighted class IDW'
+KNN_IDW_CAPTION = 'KNN + IDW interpolation'
+
 # Gaussian sigma, in degrees, applied to each class's share of the IDW weight
-# before the winning class is picked. Conceptual anchors sit on a ~3° grid, and
+# before the winning class is picked. Conceptual anchors sit on a 5° grid, and
 # at power 4 the class borders follow that grid as straight runs and right
 # angles. Around an anchor whose zone this would erase, the blur steps down
 # to half, a quarter, then none.
@@ -411,18 +422,52 @@ class StepTimer:
         return False
 
 
+# Euler pole, in degrees, of the reference-frame correction (all ages).
+PALEO_REFERENCE_FRAME_POLE = (0.0, 60.0)
+
+# Rotation angle, in degrees, about PALEO_REFERENCE_FRAME_POLE for each age (Ma).
+PALEO_REFERENCE_FRAME_ANGLES = {
+    65: 1.6,
+    70: 0.2,
+    75: -1.4,
+    80: -3.1,
+    85: -5.5,
+    90: -8.5,
+    95: -11.7,
+    100: -13.1,
+    105: -13.8,
+    110: -14.5,
+    115: -15.9,
+    120: -16.4,
+    125: -17.8,
+    130: -19.4,
+    135: -20.8,
+    140: -21.4,
+    145: -21.4,
+}
+
 PALEO_REFERENCE_FRAME_CORRECTIONS = {
-    # Maps a dataset base name (e.g. '100_ma') to an Euler rotation that converts
-    # the input coordinates from the GPlates "OptimisedMantleRef" reference frame
-    # used by the Zahirovic et al. 2022 rotation file to a paleomagnetic-aligned
-    # frame where the equator passes through northern South America at 100 Ma
-    # (Amazonas / Roraima / Pará / Amapá), matching standard paleogeographic atlases.
+    # Maps a dataset base name (e.g. '100_ma') to an Euler rotation
+    # (pole_lat_deg, pole_lon_deg, angle_deg) applied after the GPlates
+    # reconstruction. The input files are in the mantle frame of the
+    # Zahirovic et al. (2022) model (OptimisedMantleRef). The correction moves
+    # them towards a paleomagnetic frame. It is not a projection or datum fix.
     #
-    # Each entry is (pole_lat_deg, pole_lon_deg, angle_deg). The 'default' entry
-    # is applied to every dataset that does not have its own override.
-    # Calibrated empirically against the 100 Ma reference so that Brazilian basins
-    # (Barreirinhas, Pará-Maranhão, Foz do Amazonas) sit on the new equator and
-    # the South America Craton coastline straddles the equatorial zone.
+    # One angle per age (docs/adr/0045-reference-frame-correction-per-age-angle.md,
+    # 2026-10-23): the angle about the fixed pole (0° N, 60° E) that minimizes
+    # the RMS paleolatitude error of seven Brazilian margin basins (Foz do
+    # Amazonas, Pará-Maranhão, Barreirinhas, Potiguar, Sergipe-Alagoas, Campos,
+    # Santos) against the APWP of Vaes et al. (2023), queried through
+    # paleolatitude.org (van Hinsbergen et al., 2015). RMS error 0.03° to
+    # 0.34° depending on the age. Evaluation script: avalia_rotacao.py (kept outside the
+    # repository with the private data). Valid for South America only: seven
+    # points on plate 201 and a fixed pole.
+    #
+    # Before 2026-10-23 every age used the 'default' rotation, a visual fit at
+    # 100 Ma (commit 06b32b7, 2026-05-08). It stays as the fallback for a
+    # dataset name outside the table.
+    **{f'{age}_ma': PALEO_REFERENCE_FRAME_POLE + (angle,)
+       for age, angle in PALEO_REFERENCE_FRAME_ANGLES.items()},
     'default': (0.0, 60.0, -13.0),
 }
 
@@ -1449,6 +1494,32 @@ def conceptual_anchors_for_dataset(base, paleozones_data, directory=CONCEPTUAL_D
     return conceptual_anchors_from_paleozones(paleozones_data), 'paleozones'
 
 
+def citation_weight(props):
+    """Reliability of a citation (``Weight``), or the default when missing or invalid."""
+    value = (props or {}).get('Weight')
+    try:
+        weight = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_CITATION_WEIGHT
+    return weight if weight > 0 else DEFAULT_CITATION_WEIGHT
+
+
+def extract_points_values_weights(points_data):
+    """Anchor coordinates, class codes and weights of the interpolator input.
+
+    Anchors without ``anchor_weight`` count as 1, so a collection built by an
+    older pipeline interpolates exactly as before.
+    """
+    points, values = extract_points_and_values(points_data)
+    weights = []
+    for feature in points_data.get('features', []):
+        geom = feature.get('geometry', {})
+        if geom.get('type') == 'Point' and geom.get('coordinates'):
+            props = feature.get('properties') or {}
+            weights.append(float(props.get(ANCHOR_WEIGHT_KEY, DEFAULT_CITATION_WEIGHT)))
+    return points, values, np.asarray(weights, dtype=np.float64)
+
+
 def with_conceptual_anchors(points_data, anchors):
     """Point collection plus conceptual anchors, for the interpolator only."""
     features = list((points_data or {}).get('features') or [])
@@ -1558,7 +1629,8 @@ def condense_proxy_points(points_data, eps_degrees=CONDENSATION_EPS_DEGREES):
 
     Data points (a formation id) within ``eps_degrees`` of each other, chaining
     through other data points, become one anchor per winning climate class.
-    Each row is one vote. The ``Weight`` column is ignored. An exact tie emits
+    Each row is one vote. Each condensed anchor carries, as ``anchor_weight``,
+    the mean ``Weight`` of the rows that voted for its class. An exact tie emits
     one anchor per tied class at the same mean coordinate, with no jitter.
 
     Conceptual points are copied onto the interpolator unchanged and never
@@ -1615,6 +1687,10 @@ def condense_proxy_points(points_data, eps_degrees=CONDENSATION_EPS_DEGREES):
             )
             tied = len(winners) > 1
             for code in winners:
+                code_weights = [
+                    citation_weight(data_features[i].get('properties') or {})
+                    for i, climate in zip(group, climates) if climate == code
+                ]
                 condensed.append({
                     'type': 'Feature',
                     'properties': {
@@ -1624,6 +1700,7 @@ def condense_proxy_points(points_data, eps_degrees=CONDENSATION_EPS_DEGREES):
                         'tie': tied,
                         'status': 'tie' if tied else 'majority',
                         'member_ids': member_ids,
+                        ANCHOR_WEIGHT_KEY: float(sum(code_weights) / len(code_weights)),
                     },
                     'geometry': {
                         'type': 'Point',
@@ -1643,10 +1720,14 @@ def condense_proxy_points(points_data, eps_degrees=CONDENSATION_EPS_DEGREES):
                     'geometry': copy.deepcopy(data_features[i].get('geometry')),
                 })
 
-    interpolator = (
-        [copy.deepcopy(feature) for feature in condensed]
-        + [copy.deepcopy(feature) for feature in conceptual_features]
-    )
+    conceptual_copies = []
+    for feature in conceptual_features:
+        copied = copy.deepcopy(feature)
+        copied.setdefault('properties', {})
+        copied['properties'] = dict(copied['properties'] or {})
+        copied['properties'][ANCHOR_WEIGHT_KEY] = CONCEPTUAL_ANCHOR_WEIGHT
+        conceptual_copies.append(copied)
+    interpolator = [copy.deepcopy(feature) for feature in condensed] + conceptual_copies
     return (
         _feature_collection(interpolator),
         _feature_collection(condensed),
@@ -1669,17 +1750,28 @@ def write_condensation_audit(base, condensed, overruled, directory='CONDENSED'):
     return paths
 
 
-def _indicator_winners(distances, values, power):
+def _anchor_weights(weights, n):
+    if weights is None:
+        return np.ones(n, dtype=np.float64)
+    weights = np.asarray(weights, dtype=np.float64)
+    if weights.shape != (n,):
+        raise ValueError(f'expected {n} anchor weights, got shape {weights.shape}')
+    return weights
+
+
+def _indicator_winners(distances, values, power, weights=None):
     """Winning climate code per row of ``distances``.
 
-    Each anchor adds ``1 / d^power`` to its own class. A cell on top of an
-    anchor gives that class infinite weight. Equal winning weights break
+    Each anchor adds ``weight / d^power`` to its own class (weight 1 when
+    ``weights`` is None). The class code never enters the sum. A cell on top of
+    an anchor gives that class infinite weight. Equal winning weights break
     toward the nearest tied anchor, then ``CLASS_TIE_PRIORITY``.
     """
     values = np.asarray(values, dtype=np.float64)
+    anchor_w = _anchor_weights(weights, distances.shape[1])
     zero = distances == 0
     safe = np.where(zero, 1.0, distances)
-    weights = np.where(zero, np.inf, 1.0 / np.power(safe, power))
+    weights = np.where(zero, np.inf, anchor_w[None, :] / np.power(safe, power))
     codes = np.array([CLIMATE_CODE['D'], CLIMATE_CODE['S'], CLIMATE_CODE['H']])
     class_weights = np.column_stack([
         weights[:, values == code].sum(axis=1) if np.any(values == code)
@@ -1704,7 +1796,7 @@ def _indicator_winners(distances, values, power):
     return winners
 
 
-def indicator_idw(points, values, grid_lons, grid_lats, power=1.0, chunk=4096):
+def indicator_idw(points, values, grid_lons, grid_lats, power=1.0, chunk=4096, weights=None):
     """Class raster: each cell takes the climate class with the greatest IDW weight.
 
     Every anchor participates. There is no neighbor cap and no snap disk.
@@ -1723,7 +1815,7 @@ def indicator_idw(points, values, grid_lons, grid_lats, power=1.0, chunk=4096):
     for start in range(0, len(grid_points), chunk):
         stop = start + chunk
         distances = cdist(grid_points[start:stop], points)
-        winners[start:stop] = _indicator_winners(distances, values, power)
+        winners[start:stop] = _indicator_winners(distances, values, power, weights)
     return winners.reshape(lon_grid.shape)
 
 
@@ -1736,20 +1828,23 @@ def _winning_class(shares):
     return _CLASS_CODES[_PRIORITY_ROWS][np.argmax(shares[_PRIORITY_ROWS], axis=0)]
 
 
-def _indicator_shares(distances, values, power):
+def _indicator_shares(distances, values, power, weights=None):
     """Dry, semi-arid and humid share of the IDW weight, per row of ``distances``.
 
-    A cell on top of anchors splits its weight among the anchors it touches.
+    A cell on top of anchors splits its weight among the anchors it touches,
+    in proportion to their anchor weights.
     """
+    anchor_w = _anchor_weights(weights, distances.shape[1])
     zero = distances == 0
-    weights = 1.0 / np.power(np.where(zero, 1.0, distances), power)
+    weights = anchor_w[None, :] / np.power(np.where(zero, 1.0, distances), power)
     on_anchor = zero.any(axis=1)
-    weights[on_anchor] = zero[on_anchor]
+    weights[on_anchor] = zero[on_anchor] * anchor_w[None, :]
     shares = np.column_stack([weights[:, values == code].sum(axis=1) for code in _CLASS_CODES])
     return shares / shares.sum(axis=1, keepdims=True)
 
 
-def indicator_idw_with_shares(points, values, grid_lons, grid_lats, power=1.0, chunk=4096):
+def indicator_idw_with_shares(points, values, grid_lons, grid_lats, power=1.0, chunk=4096,
+                              weights=None):
     """``indicator_idw`` winners plus each class's weight share, shaped (3, lat, lon)."""
     if len(points) == 0:
         raise ValueError("No points available for indicator IDW")
@@ -1764,8 +1859,8 @@ def indicator_idw_with_shares(points, values, grid_lons, grid_lats, power=1.0, c
     for start in range(0, len(grid_points), chunk):
         stop = start + chunk
         distances = cdist(grid_points[start:stop], points)
-        winners[start:stop] = _indicator_winners(distances, values, power)
-        shares[start:stop] = _indicator_shares(distances, values, power)
+        winners[start:stop] = _indicator_winners(distances, values, power, weights)
+        shares[start:stop] = _indicator_shares(distances, values, power, weights)
     return winners.reshape(lon_grid.shape), shares.T.reshape((len(_CLASS_CODES),) + lon_grid.shape)
 
 
@@ -1815,11 +1910,13 @@ def round_class_zones(shares, winners, points, values, grid_lons, grid_lats, res
 
 
 def create_indicator_raster(points, values, output_path, resolution=0.1, power=1.0,
-                            edge_smooth=0.0):
+                            edge_smooth=0.0, weights=None, confidence_path=None):
     """Write a GeoTIFF whose cell values are climate class codes 1, 2 or 3.
 
     ``edge_smooth`` is the Gaussian sigma, in degrees, of ``round_class_zones``;
-    0 keeps the plain indicator IDW winners.
+    0 keeps the plain indicator IDW winners. ``weights`` are the anchor weights
+    (None = 1 each). When ``confidence_path`` is given, a second GeoTIFF stores
+    the share of the winning class before smoothing (1/3 to 1).
     """
     points = np.asarray(points, dtype=np.float64)
     values = np.asarray(values, dtype=np.float64)
@@ -1835,17 +1932,22 @@ def create_indicator_raster(points, values, output_path, resolution=0.1, power=1
     print(f"Bounds: [{min_lat:.2f}, {min_lon:.2f}] to [{max_lat:.2f}, {max_lon:.2f}]")
     print(f"Anchors: {len(points)} (all of them; power {power}; no snap disk)")
 
-    if edge_smooth > 0:
+    shares = None
+    if edge_smooth > 0 or confidence_path:
         winners, shares = indicator_idw_with_shares(
-            points, values, grid_lons, grid_lats, power=power
+            points, values, grid_lons, grid_lats, power=power, weights=weights
         )
+    if edge_smooth > 0:
         grid_values = round_class_zones(
             shares, winners, points, values, grid_lons, grid_lats, resolution, edge_smooth
         )
         changed = float(np.mean(grid_values != winners)) * 100.0
         print(f"Edge smoothing: sigma {edge_smooth}°, {changed:.1f}% of cells changed class")
+    elif shares is not None:
+        grid_values = winners
     else:
-        grid_values = indicator_idw(points, values, grid_lons, grid_lats, power=power)
+        grid_values = indicator_idw(points, values, grid_lons, grid_lats, power=power,
+                                    weights=weights)
 
     transform = from_bounds(
         min_lon, min_lat, max_lon, max_lat, len(grid_lons), len(grid_lats)
@@ -1865,8 +1967,20 @@ def create_indicator_raster(points, values, output_path, resolution=0.1, power=1
         transform=transform,
         compress='lzw',
     ) as dst:
-        dst.write(grid_values, 1)
+        # grid_lats runs south->north; a GeoTIFF's row 0 is the north edge
+        dst.write(np.flipud(grid_values), 1)
     print(f"Indicator IDW raster saved to: {output_path}")
+    if confidence_path:
+        confidence = shares.max(axis=0).astype(np.float32)
+        conf_dir = os.path.dirname(confidence_path)
+        if conf_dir:
+            os.makedirs(conf_dir, exist_ok=True)
+        with rasterio.open(
+            confidence_path, 'w', driver='GTiff', height=len(grid_lats), width=len(grid_lons),
+            count=1, dtype=confidence.dtype, crs='EPSG:4326', transform=transform, compress='lzw',
+        ) as dst:
+            dst.write(np.flipud(confidence), 1)
+        print(f"Confidence raster saved to: {confidence_path}")
     return output_path
 
 
@@ -2167,7 +2281,8 @@ def create_idw_raster(points_data, output_path, resolution=0.1, power=2, n_neigh
         transform=transform,
         compress='lzw'
     ) as dst:
-        dst.write(grid_values, 1)
+        # grid_lats runs south->north; a GeoTIFF's row 0 is the north edge
+        dst.write(np.flipud(grid_values), 1)
     
     print(f"IDW raster saved to: {output_path}")
     return output_path
@@ -2296,9 +2411,7 @@ def create_raster_overlay(geotiff_path, map_obj, raster_img_path='raster_overlay
             )
             print(f"Color range - {channel_ranges}")
 
-            # Flip image vertically because raster origin is top-left but geographic is bottom-left
-            rgba = np.flipud(rgba)
-
+            # Rasters are written north-up (row 0 = north), the same as the image.
             img_colored = Image.fromarray(rgba, mode='RGBA')
             
             # Save to a permanent location
@@ -4317,10 +4430,15 @@ def _extract_method_tag(filename):
             return method
     return ''
 
-def _map_caption(filename, method):
-    """Caption naming the interpolation a generated map came from."""
+def _map_caption(filename, method, knn=False):
+    """Caption naming the interpolation a generated map came from.
+
+    ``knn`` is True when the run reclassified the anchors by KNN (``--knn``).
+    """
     if '_knn_idw' in filename:
-        caption = 'KNN + IDW interpolation'
+        # The filename keeps its historical ``knn_idw`` tag; without ``--knn``
+        # the maps come from the reliability-weighted class IDW.
+        caption = KNN_IDW_CAPTION if knn else WEIGHTED_IDW_CAPTION
     elif '_idw' in filename:
         caption = 'IDW interpolation'
     else:
@@ -4328,8 +4446,11 @@ def _map_caption(filename, method):
     return f'{caption} · {method_label(method)}' if method else caption
 
 
-def generate_index_html(dir_idw, output='index.html'):
-    """Generate the viewer shell. The published maps are the KNN + indicator-IDW rasters."""
+def generate_index_html(dir_idw, output='index.html', knn=False):
+    """Generate the viewer shell for the class IDW maps (``*_knn_idw*`` files).
+
+    ``knn`` names the captions after the KNN + IDW pipeline (``--knn``).
+    """
     maps_list = []
     folder = dir_idw
     if os.path.isdir(folder):
@@ -4348,15 +4469,17 @@ def generate_index_html(dir_idw, output='index.html'):
                 if os.path.isfile(candidate):
                     pdfs[scope] = candidate
             comparison_path = f"COMPARISON/comparison_report_{age}.html"
+            burgener_path = f"COMPARISON/comparison_report_{age}_burgener.html"
             method = _extract_method_tag(h)
             maps_list.append({
                 'path': html_path,
                 'age': age,
                 'label': f"{age} Ma",
                 'method': method,
-                'caption': _map_caption(h, method),
+                'caption': _map_caption(h, method, knn=knn),
                 'pdf': pdfs,
                 'comparison': comparison_path if os.path.isfile(comparison_path) else '',
+                'burgener': burgener_path if os.path.isfile(burgener_path) else '',
             })
 
     if not maps_list:
@@ -4631,9 +4754,10 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     gap: 10px;
     flex: none;
   }
-  /* Keep the Comparison slot on every age so the header does not shift
-     when leaving 105/115 Ma. */
-  #comparisonBtn.is-absent {
+  /* Keep the Comparison and Burgener slots on every age so the header does
+     not shift when an age has no report. */
+  #comparisonBtn.is-absent,
+  #burgenerBtn.is-absent {
     visibility: hidden;
     pointer-events: none;
   }
@@ -4697,6 +4821,11 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
   @media (max-width: 900px) {
     header { flex-wrap: wrap; gap: 10px 14px; }
     .divider { display: none; }
+    /* The two comparison labels do not fit one phone row: let the actions
+       wrap, and drop an absent slot instead of keeping its width. */
+    .header-actions { flex: 1 1 100%; flex-wrap: wrap; gap: 8px; }
+    #comparisonBtn.is-absent,
+    #burgenerBtn.is-absent { display: none; }
   }
 </style>
 </head>
@@ -4729,7 +4858,11 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
 
   <div class="header-actions">
     <button type="button" class="btn is-absent" id="comparisonBtn"
-            aria-hidden="true" tabindex="-1">Comparison</button>
+            title="Comparison with Hay &amp; Flögel (2012)" aria-hidden="true"
+            tabindex="-1">Comparison Hay &amp; Flögel (2012)</button>
+    <button type="button" class="btn is-absent" id="burgenerBtn"
+            title="Comparison with Burgener et al. (2023)" aria-hidden="true"
+            tabindex="-1">Comparison Burgener (2023)</button>
     <a class="btn" id="addPointBtn" href="add-point.html">Add points</a>
     <button class="btn btn-primary" id="pdfBtn" title="Export the raster area as a vector PDF (P)">
       <span class="btn-ico" aria-hidden="true">
@@ -4762,6 +4895,7 @@ var ctxAge = document.getElementById('ctxAge');
 var ctxSub = document.getElementById('ctxSub');
 var pdfBtn = document.getElementById('pdfBtn');
 var comparisonBtn = document.getElementById('comparisonBtn');
+var burgenerBtn = document.getElementById('burgenerBtn');
 var loader = document.getElementById('loader');
 var toast = document.getElementById('toast');
 
@@ -4823,6 +4957,14 @@ function closeCombo() {
   comboBtn.setAttribute('aria-expanded', 'false');
 }
 
+function setReportSlot(button, href) {
+  var present = Boolean(href);
+  button.classList.toggle('is-absent', !present);
+  button.setAttribute('aria-hidden', present ? 'false' : 'true');
+  button.tabIndex = present ? 0 : -1;
+  if (!present && document.activeElement === button) button.blur();
+}
+
 function selectMap(idx, pushHash) {
   current = clamp(idx);
   var entry = MAPS[current];
@@ -4832,11 +4974,8 @@ function selectMap(idx, pushHash) {
   pdfBtn.disabled = true;
   frame.src = entry.path;
 
-  var hasComparison = Boolean(entry.comparison);
-  comparisonBtn.classList.toggle('is-absent', !hasComparison);
-  comparisonBtn.setAttribute('aria-hidden', hasComparison ? 'false' : 'true');
-  comparisonBtn.tabIndex = hasComparison ? 0 : -1;
-  if (!hasComparison && document.activeElement === comparisonBtn) comparisonBtn.blur();
+  setReportSlot(comparisonBtn, entry.comparison);
+  setReportSlot(burgenerBtn, entry.burgener);
   if (pushHash !== false) {
     history.replaceState(null, '', '#age=' + entry.age);
   }
@@ -4963,6 +5102,10 @@ comparisonBtn.addEventListener('click', function() {
   var entry = MAPS[current];
   if (entry.comparison) window.open(entry.comparison, '_blank');
 });
+burgenerBtn.addEventListener('click', function() {
+  var entry = MAPS[current];
+  if (entry.burgener) window.open(entry.burgener, '_blank');
+});
 frame.addEventListener('load', function() {
   loader.classList.remove('on');
   pdfBtn.disabled = false;
@@ -4986,8 +5129,11 @@ setTimeout(function () { selectMap(initialIndex(), false); }, 0);
 </body>
 </html>"""
 
-def _publish_protected_site():
-    """Rescore Hay/Floegel on the new rasters, then encrypt the published HTML."""
+def _rescore_comparisons():
+    """Rescore the published atlases (Hay & Floegel, Burgener) on the new rasters.
+
+    Runs before index.html is written, so the viewer links every report that exists.
+    """
     repo = os.path.dirname(os.path.abspath(__file__))
     compare = os.path.join(repo, 'compare_floegel.py')
     environment = os.environ.copy()
@@ -4996,6 +5142,8 @@ def _publish_protected_site():
     commands = (
         [sys.executable, '-u', compare, 'compare'],
         [sys.executable, '-u', compare, 'compare', '--atlas', 'hay'],
+        [sys.executable, '-u', os.path.join(repo, 'compare_chumakov.py'), 'compare'],
+        [sys.executable, '-u', os.path.join(repo, 'compare_burgener.py'), 'compare'],
     )
     for command in commands:
         completed = subprocess.run(command, cwd=repo, env=environment)
@@ -5003,6 +5151,10 @@ def _publish_protected_site():
             completed = subprocess.run(command, cwd=repo, env=environment)
         if completed.returncode != 0:
             raise SystemExit('Comparison failed ({})'.format(' '.join(command)))
+
+
+def _publish_protected_site():
+    """Encrypt the published HTML."""
     from encrypt_site import encrypt_published
     encrypt_published()
 
@@ -5069,6 +5221,12 @@ def main():
                              'the raster area (requires playwright)')
     parser.add_argument('--map', dest='maps', nargs='+', metavar='DATASET',
                         help='Render only the given dataset(s), e.g. --map 110 or --map 110 115 (default: all)')
+    parser.add_argument('--knn', action='store_true',
+                        help='Reproduce the previous pipeline: reclassify the anchors by KNN '
+                             '(mean of class codes 1-3 cut in thirds) before the IDW. Off by default.')
+    parser.add_argument('--no-weights', action='store_true',
+                        help='Give every anchor weight 1 (ignore citation reliability and the '
+                             f'{CONCEPTUAL_ANCHOR_WEIGHT} weight of conceptual anchors).')
     method_group = parser.add_mutually_exclusive_group()
     method_group.add_argument('--brute', dest='method', action='store_const', const=METHOD_BRUTE,
                               help='Record brute force on the published filename [default]. '
@@ -5233,17 +5391,25 @@ def main():
         else:
             print(f"Original raster not found ({original_raster_path}), skipping Original map.")
 
-        print(f"\nExecuting KNN reclass + indicator IDW — {method_label(method)}")
-        points, values = extract_points_and_values(interpolator_data)
-        with StepTimer(f"KNN reclass (k={KNN_NEIGHBORS}, {method})") as t:
-            smoothed = knn_smooth_values(
-                points, values, k=KNN_NEIGHBORS, power=power,
-                exclude_self=True, method=method,
-            )
-            class_values = classify_climate_values(smoothed)
-        _record_step(t)
-        changed = int(np.sum(class_values != values))
-        print(f"KNN reclassified {changed} of {len(values)} anchors (k={KNN_NEIGHBORS})")
+        points, values, anchor_weights = extract_points_values_weights(interpolator_data)
+        if args.no_weights:
+            anchor_weights = np.ones(len(values), dtype=np.float64)
+        class_values = values
+        if args.knn:
+            print(f"\nExecuting KNN reclass + indicator IDW — {method_label(method)}")
+            with StepTimer(f"KNN reclass (k={KNN_NEIGHBORS}, {method})") as t:
+                smoothed = knn_smooth_values(
+                    points, values, k=KNN_NEIGHBORS, power=power,
+                    exclude_self=True, method=method,
+                )
+                class_values = classify_climate_values(smoothed)
+            _record_step(t)
+            changed = int(np.sum(class_values != values))
+            print(f"KNN reclassified {changed} of {len(values)} anchors (k={KNN_NEIGHBORS})")
+        else:
+            print(f"\nExecuting weighted indicator IDW (no KNN) — "
+                  f"{len(values)} anchors, weights {anchor_weights.min():.2f} to {anchor_weights.max():.2f}")
+        confidence_path = os.path.join('GENERATED_CONFIDENCE', f'{base}_confidence{params_suffix}.tif')
 
         with StepTimer(f"Indicator IDW raster ({method})") as t:
             create_indicator_raster(
@@ -5253,10 +5419,12 @@ def main():
                 resolution=0.1,
                 power=power,
                 edge_smooth=edge_smooth,
+                weights=anchor_weights,
+                confidence_path=confidence_path,
             )
         _record_step(t)
 
-        print(f"Generating Map: KNN + IDW ({map_idw_file})")
+        print(f"Generating Map: class IDW ({map_idw_file})")
         with StepTimer("Map: IDW") as t:
             create_map(
                 points_data=points_data,
@@ -5268,7 +5436,7 @@ def main():
                 color_stats_img_path=raster_overlay_idw_png,
                 method=method,
                 age_label=age_label,
-                map_subtitle='KNN + IDW interpolation',
+                map_subtitle=KNN_IDW_CAPTION if args.knn else WEIGHTED_IDW_CAPTION,
                 basins_data=basins_data,
             )
         _record_step(t)
@@ -5299,7 +5467,8 @@ def main():
     print("\n" + "=" * 60)
     print("All maps generated successfully!")
     print("=" * 60)
-    print(f"Power: {power}, KNN neighbors: {KNN_NEIGHBORS}, class colors: equal thirds of [1, 3]")
+    print(f"Power: {power}; KNN reclassification: {'on (k=' + str(KNN_NEIGHBORS) + ')' if args.knn else 'off'}; "
+          f"anchor weights: {'off' if args.no_weights else 'citation reliability, conceptual ' + str(CONCEPTUAL_ANCHOR_WEIGHT)}")
     print("Edge smoothing: " + (f"Gaussian sigma {edge_smooth}° on the class shares"
                                  if edge_smooth > 0 else "off"))
     print(f"Condensation radius: {condensation_radius}° before the paleo rotation")
@@ -5311,8 +5480,9 @@ def main():
     for f in generated:
         print(f"  {f}")
 
+    _rescore_comparisons()
     with StepTimer("Generate index.html", indent=0) as t:
-        generate_index_html(dir_idw_maps)
+        generate_index_html(dir_idw_maps, knn=args.knn)
     _publish_protected_site()
 
     script_rss_end = _RSS_SAMPLER.sample()

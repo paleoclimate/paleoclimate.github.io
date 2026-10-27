@@ -27,8 +27,13 @@ flowchart LR
             API <--> BECache
 
             subgraph Prediction["Prediction Pipeline"]
-                KNN[KNN]
-                IDW[IDW]
+                COND[Condensation 0.5 deg]
+                CONC[Conceptual maps 5 deg grid]
+                ROT[Rotation per age]
+                IDW[IDW per class with weights]
+                SMOOTH[Smoothing 2.0 deg]
+                OUT[GeoTIFF classes and confidence]
+                COND --> CONC --> ROT --> IDW --> SMOOTH --> OUT
             end
         end
     end
@@ -62,7 +67,7 @@ flowchart LR
     %% Apply styles
     class Researchers,User actor
     class Frontend,Backend,DataLayer,PCVS,Prediction package
-    class FE,GeoPlotter,API,KNN,IDW component
+    class FE,GeoPlotter,API,COND,CONC,ROT,IDW,SMOOTH,OUT component
     class PaleoDB,BECache component
     class Evidence artifact
     class PyGplates libraryflowchart LR
@@ -94,8 +99,13 @@ flowchart LR
             API <--> BECache
 
             subgraph Prediction["Prediction Pipeline"]
-                KNN[KNN]
-                IDW[IDW]
+                COND[Condensation 0.5 deg]
+                CONC[Conceptual maps 5 deg grid]
+                ROT[Rotation per age]
+                IDW[IDW per class with weights]
+                SMOOTH[Smoothing 2.0 deg]
+                OUT[GeoTIFF classes and confidence]
+                COND --> CONC --> ROT --> IDW --> SMOOTH --> OUT
             end
         end
     end
@@ -129,7 +139,7 @@ flowchart LR
     %% Apply styles
     class Researchers,User actor
     class Frontend,Backend,DataLayer,PCVS,Prediction package
-    class FE,GeoPlotter,API,KNN,IDW component
+    class FE,GeoPlotter,API,COND,CONC,ROT,IDW,SMOOTH,OUT component
     class PaleoDB,BECache component
     class Evidence artifact
     class PyGplates library
