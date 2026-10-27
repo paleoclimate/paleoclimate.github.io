@@ -3,6 +3,7 @@
 Synthetic images, plus checks on the committed crops and georeference table.
 """
 import json
+import os
 
 import numpy as np
 import pytest
@@ -41,7 +42,7 @@ def test_graticule_spacing_with_missing_lines():
 
 
 def test_land_mask_closes_symbols_on_land():
-    prototypes = cf.extract_legend_prototypes(str(cf.INPUT_DIR) + '/legenda.png')
+    prototypes = chumakov.legend_prototypes()
     rgb = np.full((60, 60, 3), OCEAN, np.uint8)
     yellow = next(rgb_ for rgb_, code in prototypes if code == DRY)
     rgb[10:50, 10:50] = yellow
@@ -51,11 +52,13 @@ def test_land_mask_closes_symbols_on_land():
 
 
 def test_legend_classes_follow_the_floegel_de_para():
-    prototypes = cf.extract_legend_prototypes(str(cf.INPUT_DIR) + '/legenda.png')
-    assert {code for _rgb, code in prototypes} == {DRY, SEMI, HUMID}
+    # Without the local legenda.png the scanner falls back to its sampled values.
+    assert {code for _rgb, code in cf.extract_legend_prototypes('missing.png')} == {DRY, SEMI, HUMID}
+    assert {code for _rgb, code in chumakov.legend_prototypes()} == {DRY, SEMI, HUMID}
 
 
-def test_committed_crops_have_a_georeference():
+def test_georeference_table_covers_every_stage():
+    """The table is committed; the crops are local (Elsevier), made by extract."""
     table = json.loads(open(chumakov.GEOREF_PATH, encoding='utf-8').read())
     for age in chumakov.AGES:
         assert age in table, age
@@ -65,8 +68,15 @@ def test_committed_crops_have_a_georeference():
         assert len(entry['fit']) == 3
         assert entry['shore_distance_after_deg'] < entry['shore_distance_before_deg']
         assert chumakov.image_path(age).endswith(f'{age}_chumakov.png')
-        rgb, plate, _entry = chumakov.load_crop(age)
-        assert rgb.shape[0] < 700 and rgb.shape[1] < 700   # a crop, not the whole figure
+
+
+def test_local_crops_are_crops_not_whole_figures():
+    present = [age for age in chumakov.AGES if os.path.isfile(chumakov.image_path(age))]
+    if not present:
+        pytest.skip('Chumakov crops are local only; run compare_chumakov.py extract --pdf ...')
+    for age in present:
+        rgb, _plate, _entry = chumakov.load_crop(age)
+        assert rgb.shape[0] < 700 and rgb.shape[1] < 700
 
 
 def test_stage_ages_are_the_nearest_pcvs_age_to_the_stage_middle():

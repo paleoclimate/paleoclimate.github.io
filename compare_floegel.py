@@ -85,6 +85,12 @@ AGES = ('115', '105')
 # Name printed in reports, CSV headers and figure titles for each published atlas.
 ATLAS_LABELS = {'floegel': 'Floegel', 'hay': 'Hay', 'burgener': 'Burgener'}
 
+# Atlases whose figures may be reproduced in the published reports. Burgener comes
+# from Scotese et al. (2024), CC BY 4.0. Hay & Floegel (2012) is (c) Elsevier and not
+# open access: its scans and crops stay local (.gitignore) and the reports show only
+# the reduced three-class map, never the figure itself.
+ATLAS_IMAGE_SHAREABLE = {'burgener'}
+
 # Stamped into exported gcp_<age>.json. Points picked before the reference render was
 # flipped to match the transform are in a mirrored frame and must be re-picked.
 GCP_FRAME = 'north-up-v2'
@@ -1030,6 +1036,17 @@ def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps,
         )
     else:
         reference_block = ''
+    if atlas in ATLAS_IMAGE_SHAREABLE:
+        atlas_block = (
+            f'<h2>{atlas_label} deformado (validacao visual do alinhamento)</h2>\n'
+            f'  <img src="{data_uri(warped_path(age, atlas))}" alt="warped {atlas}">'
+        )
+    else:
+        atlas_block = (
+            '<div class="note">A figura publicada (Hay e Floegel, 2012, Earth-Science Reviews 115, '
+            '&copy; Elsevier) nao e reproduzida aqui por direitos autorais; o painel acima mostra so a '
+            'reducao a tres classes sobre a grade do GeoTIFF.</div>'
+        )
 
     html = f"""<!DOCTYPE html>
 <html lang="pt-br">
@@ -1089,8 +1106,7 @@ def save_report_html(age, cm, metrics, ref_pct, flo_pct, warp_method, n_gcps,
   <h2>Mapas de classe e matriz</h2>
   <img src="{data_uri(classes_path(age, atlas))}" alt="composite">
 
-  <h2>{atlas_label} deformado (validacao visual do alinhamento)</h2>
-  <img src="{data_uri(warped_path(age, atlas))}" alt="warped {atlas}">
+  {atlas_block}
 
   {reference_block}
 </div>

@@ -17,8 +17,9 @@ graticule and no coordinate labels. ``extract`` (run once, needs the PDF and
 finds the offset of the map by matching its shoreline to our coastline over
 the whole figure, and keeps only a crop around the raster window in
 ``COMPARISON/inputs/{age}_chumakov.png``, with the georeference in
-``COMPARISON/inputs/chumakov_georef.json``. The article is not open access,
-so the repository keeps the crops, as it does for the Floegel scans.
+``COMPARISON/inputs/chumakov_georef.json``. The article is (c) Elsevier and not
+open access, so the crops stay local (.gitignore, ADR 0049); only the
+georeference table is committed. Run ``extract`` once from the PDF.
 
 ``compare`` refits the rotation and shift on the crop (as for Burgener),
 classifies it with the Floegel legend and de-para, and writes the same

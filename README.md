@@ -176,7 +176,8 @@ Results: open `COMPARISON/index_comparison.html` for HTML reports and CSV metric
 The Floegel maps are the Chumakov et al. (1995) climate-zone maps reprinted in Hay & Floegel (2012, Earth-Science Reviews 115). The other four maps of that paper (Berriasian, Cenomanian, Santonian, Maastrichtian) are scored at **140, 95, 85 and 70 Ma** without control points: the 30° graticule gives the scale and a shoreline fit gives the position (`docs/adr/0048-hay-floegel-stages-scored-by-shoreline-fit.md`).
 
 ```bash
-python compare_chumakov.py compare            # uses the committed crops
+python compare_chumakov.py extract --pdf "<Hay & Floegel 2012>.pdf"   # once: local crops (Elsevier, not committed)
+python compare_chumakov.py compare
 ```
 
 ## Comparison with Burgener et al. (2023) palaeo-Köppen maps

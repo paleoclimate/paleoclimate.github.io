@@ -14,9 +14,9 @@ Antes de comparar, confira se você tem:
 |---------|-----------|
 | `GENERATED_GEOTIFFS/105_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.tif` | GeoTIFF gerado para 105 Ma |
 | `GENERATED_GEOTIFFS/115_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.tif` | GeoTIFF gerado para 115 Ma |
-| `COMPARISON/inputs/105_floegel.png` | Recorte PNG do mapa Floegel (105 Ma) |
-| `COMPARISON/inputs/115_floegel.png` | Recorte PNG do mapa Floegel (115 Ma) |
-| `COMPARISON/inputs/legenda.png` | Recorte da legenda de cores do Floegel |
+| `COMPARISON/inputs/105_floegel.png` | Recorte PNG do mapa Floegel (105 Ma); só local, fora do git (ADR 0049) |
+| `COMPARISON/inputs/115_floegel.png` | Recorte PNG do mapa Floegel (115 Ma); só local |
+| `COMPARISON/inputs/legenda.png` | Recorte da legenda de cores do Floegel; só local (sem ele, valem as cores amostradas no código) |
 
 Se os GeoTIFFs ainda não existem, gere os mapas primeiro:
 
@@ -122,8 +122,9 @@ uma vez e precisa do PDF e do `pymupdf`, faz o seguinte:
 - acha a posição do mapa pela costa (busca ampla de ±45° em longitude e ±30° em latitude, depois ajuste fino);
 - guarda só um recorte em volta da janela do raster (`inputs/{idade}_chumakov.png`), com a georreferência em `inputs/chumakov_georef.json`.
 
-O artigo não é de acesso aberto; por isso o repositório guarda recortes, como
-já faz com os do Floegel.
+O artigo é © Elsevier e não é de acesso aberto. Por isso os recortes ficam só
+no computador (`.gitignore`), e o repositório guarda só a georreferência (ADR 0049).
+Os recortes do Floegel (105 e 115 Ma), a legenda e o `gcp_picker.html` também são locais.
 
 ```bash
 python compare_chumakov.py extract --pdf "<Hay e Floegel 2012>.pdf"   # só para refazer os recortes
