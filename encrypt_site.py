@@ -16,7 +16,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from site_crypto import REPO_ROOT, TEAM_PASSWORD, is_encrypted, load_salt
+from site_crypto import REPO_ROOT, is_encrypted, load_salt, team_password
 
 TEMPLATE = REPO_ROOT / 'staticrypt' / 'password_template.html'
 ADD_POINT_SOURCE = REPO_ROOT / 'templates' / 'add-point.html'
@@ -70,7 +70,7 @@ def encrypt_html(source: Path, destination: Path, *, force: bool) -> None:
         incoming.write_text(text, encoding='utf-8')
         outgoing.mkdir()
         environment = os.environ.copy()
-        environment['STATICRYPT_PASSWORD'] = TEAM_PASSWORD
+        environment['STATICRYPT_PASSWORD'] = team_password()
         subprocess.run(
             [
                 'node',

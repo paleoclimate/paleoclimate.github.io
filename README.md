@@ -27,6 +27,37 @@ points, reconstructed coastlines, optional basin outlines, and GeoTIFF raster da
 pip install -r requirements.txt
 ```
 
+## Private data and the site password
+
+The citation data is not versioned. `GEOJSON/` (source points), `conceptual/`
+(conceptual lattices) and `CONDENSED/` (condensation audits) are gitignored and
+live only on the team's machines; get them from the team and copy them into the
+repository root before generating maps.
+
+The StatiCrypt team password is not stored in the repository. It is defined in
+the environment variable `PALEOCLIMATE_SITE_PASSWORD`. Set it in the shell or
+copy `.env.example` to `.env` (gitignored) and put the real value there:
+
+```bash
+cp .env.example .env            # then edit PALEOCLIMATE_SITE_PASSWORD
+# or, per shell:
+export PALEOCLIMATE_SITE_PASSWORD='...'          # bash
+$env:PALEOCLIMATE_SITE_PASSWORD = '...'          # PowerShell
+```
+
+`render_map.py`/`encrypt_site.py` stop with a clear error when it is missing.
+
+Running the tests locally:
+
+- With the private folders and the real password, the full suite runs.
+- Without them, checks that need the private folders or that decrypt the
+  published HTML are reported as skipped; the rest still runs
+  (`PALEOCLIMATE_SITE_PASSWORD=any-value python -m pytest -q`).
+- After changing the password, regenerate the published pages from plaintext
+  (`python render_map.py ...` for the maps and `index.html`, and the comparison
+  pages with `compare_floegel.py`) so they are encrypted with the new value;
+  `encrypt_site.py` skips pages that are already ciphertext.
+
 ## Usage
 
 Run the script to generate the interactive maps. The published candidate

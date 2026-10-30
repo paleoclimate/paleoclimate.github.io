@@ -2,3 +2,12 @@ backup/
 GEOJSON/
 __pycache__/
 node_modules/
+
+# Private citation data: kept only on the team's machines (not versioned)
+CONDENSED/
+conceptual/
+
+# Local secrets (site password); copy .env.example to .env
+.env
+.env.*
+!.env.example
