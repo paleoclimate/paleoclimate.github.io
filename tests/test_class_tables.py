@@ -37,6 +37,8 @@ def _data_point_counts(age: int) -> Counter:
 
 
 def _audit_counts(age: int) -> tuple[Counter, Counter]:
+    if not (REPO / 'CONDENSED' / f'{age}_ma_condensed.geojson').is_file():
+        pytest.skip('CONDENSED/ is private, local and gitignored')
     condensed = json.loads(
         (REPO / 'CONDENSED' / f'{age}_ma_condensed.geojson').read_text(encoding='utf-8')
     )

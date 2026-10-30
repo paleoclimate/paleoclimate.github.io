@@ -11,7 +11,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from site_crypto import passphrase_hash, read_html
+import pytest
+
+from site_crypto import (
+    MissingSitePasswordError,
+    WrongSitePasswordError,
+    passphrase_hash,
+    read_html as _read_html,
+)
 INDEX_HTML = REPO_ROOT / 'index.html'
 KNN_DIR = REPO_ROOT / 'GENERATED_KNN_IDW_MAPS'
 IDW_DIR = REPO_ROOT / 'GENERATED_IDW_MAPS'
@@ -126,6 +133,36 @@ MAP_STATE = """
 """
 
 
+_PAGES_READABLE: bool | None = None
+SKIP_UNREADABLE = (
+    'published HTML is StatiCrypt ciphertext; set PALEOCLIMATE_SITE_PASSWORD '
+    'to the team password to run this check'
+)
+
+
+def site_pages_readable() -> bool:
+    """True when the viewer is plaintext or decrypts with the configured password."""
+    global _PAGES_READABLE
+    if _PAGES_READABLE is None:
+        try:
+            _read_html(INDEX_HTML)
+            _PAGES_READABLE = True
+        except (MissingSitePasswordError, WrongSitePasswordError, FileNotFoundError):
+            _PAGES_READABLE = False
+    return _PAGES_READABLE
+
+
+def require_site_pages() -> None:
+    """Skip the current test when the published pages cannot be decrypted."""
+    if not site_pages_readable():
+        pytest.skip(SKIP_UNREADABLE)
+
+
+def read_html(path: Path) -> str:
+    require_site_pages()
+    return _read_html(path)
+
+
 def load_maps_catalog(index_path: Path | None = None) -> list[dict]:
     """Parse the ``MAPS`` array embedded in the viewer."""
     path = index_path or INDEX_HTML
@@ -155,7 +192,13 @@ def entry_for_age(age: int, maps: list[dict] | None = None) -> dict:
 
 
 def representative_ages(maps: list[dict] | None = None) -> list[int]:
-    """Youngest, a mid age, oldest, plus every age that has a comparison report."""
+    """Youngest, a mid age, oldest, plus every age that has a comparison report.
+
+    Without a password that opens the viewer, collection gets no ages and the
+    parametrized checks are reported as skipped.
+    """
+    if maps is None and not site_pages_readable():
+        return []
     entries = maps if maps is not None else load_maps_catalog()
     ages = [int(entry['age']) for entry in entries]
     picks = {ages[0], ages[len(ages) // 2], ages[-1]}
@@ -297,6 +340,7 @@ def _clear_page_errors(page) -> None:
 
 def auth_init_script() -> str:
     """Unlock StatiCrypt pages in this tab before their scripts run."""
+    require_site_pages()
     return "sessionStorage.setItem('pcvs-staticrypt', '%s');" % passphrase_hash()
 
 
