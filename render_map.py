@@ -4213,10 +4213,17 @@ class PdfExporter:
                 margin={'top': '0', 'right': '0', 'bottom': '0', 'left': '0'},
                 print_background=True,
             )
+            from site_crypto import encrypt_pdf
+            encrypt_pdf(pdf_path_abs)
             print(f"  PDF saved ({PDF_SCOPE_LABELS.get(scope, scope)}): {pdf_path}")
             return True
         except Exception as e:
             print(f"  PDF failed for {html_path} [{scope}]: {e}")
+            if os.path.isfile(pdf_path_abs) and open(pdf_path_abs, 'rb').read(8) != b'PCVSENC1':
+                try:
+                    os.remove(pdf_path_abs)
+                except OSError:
+                    pass
             return False
         finally:
             if page is not None:
@@ -4854,23 +4861,54 @@ function downloadBlob(blob, filename) {
   setTimeout(function() { URL.revokeObjectURL(url); }, 4000);
 }
 
-/* Pre-rendered PDFs are the fallback for browsers that cannot reach into the
-   frame (for instance when the site is opened straight from disk). They show
-   the map with every layer on, which is how it loads. */
+/* The file next to the map is ciphertext. Decrypt with the session key, then
+   hand the browser a real PDF. A direct download of the file is not a PDF. */
+function hexToBytes(hex) {
+  var out = new Uint8Array(hex.length / 2);
+  for (var i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return out;
+}
+
+function decryptSealedPdf(buffer, hexKey) {
+  var bytes = new Uint8Array(buffer);
+  var magic = String.fromCharCode.apply(null, bytes.subarray(0, 8));
+  if (magic !== 'PCVSENC1') return Promise.reject(new Error('PDF is not sealed'));
+  return crypto.subtle.importKey(
+    'raw', hexToBytes(hexKey), {name: 'AES-GCM'}, false, ['decrypt']
+  ).then(function(key) {
+    return crypto.subtle.decrypt(
+      {name: 'AES-GCM', iv: bytes.subarray(8, 20)},
+      key,
+      bytes.subarray(20)
+    );
+  });
+}
+
 function downloadPrerendered() {
   var entry = MAPS[current];
   var href = (entry.pdf || {}).raster;
   if (!href) {
     showToast('No PDF available for this map.', true);
-    return false;
+    return Promise.resolve(false);
   }
-  var a = document.createElement('a');
-  a.href = href;
-  a.download = href.split('/').pop();
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  return true;
+  var hexKey = '';
+  try { hexKey = sessionStorage.getItem('pcvs-staticrypt') || ''; } catch (err) {}
+  if (!hexKey) {
+    showToast('Unlock the atlas before downloading the PDF.', true);
+    return Promise.resolve(false);
+  }
+  return fetch(href).then(function(response) {
+    if (!response.ok) throw new Error('missing');
+    return response.arrayBuffer();
+  }).then(function(buffer) {
+    return decryptSealedPdf(buffer, hexKey);
+  }).then(function(plain) {
+    downloadBlob(new Blob([plain], {type: 'application/pdf'}), href.split('/').pop());
+    return true;
+  }).catch(function() {
+    showToast('Could not open the pre-rendered PDF.', true);
+    return false;
+  });
 }
 
 /* The frame draws a vector PDF of the raster extent. Points, shores and
@@ -4913,10 +4951,12 @@ function exportPdf() {
   exportLive('raster').then(function() {
     showToast('PDF exported.');
   }).catch(function(err) {
-    if (downloadPrerendered()) {
-      showToast('Live export unavailable (' + err.message +
-                '); downloaded the pre-rendered PDF instead.', true);
-    }
+    return downloadPrerendered().then(function(ok) {
+      if (ok) {
+        showToast('Live export unavailable (' + err.message +
+                  '); downloaded the pre-rendered PDF instead.', true);
+      }
+    });
   }).finally(function() {
     pdfBtn.classList.remove('busy');
   });

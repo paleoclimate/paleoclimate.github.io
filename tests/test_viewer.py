@@ -7,6 +7,7 @@ import re
 
 import pytest
 
+from site_crypto import team_password
 from tests.helpers import (
     COMPARISON_AGES,
     STORAGE_KEY,
@@ -307,7 +308,7 @@ def test_viewer_asks_for_the_password_before_loading_a_map(browser, base_url):
         )
         page.locator('.staticrypt-toggle-password-visibility').click()
         assert password.evaluate('el => el.type') == 'text'
-        password.fill('Paleoclima-2026-entrega')
+        password.fill(team_password())
         page.locator('.staticrypt-decrypt-button').click()
         page.wait_for_function(
             "() => (document.getElementById('mapFrame') && "

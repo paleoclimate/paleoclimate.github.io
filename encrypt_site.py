@@ -16,7 +16,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from site_crypto import REPO_ROOT, TEAM_PASSWORD, is_encrypted, load_salt
+from site_crypto import REPO_ROOT, encrypt_pdf, is_encrypted, load_salt, team_password
 
 TEMPLATE = REPO_ROOT / 'staticrypt' / 'password_template.html'
 ADD_POINT_SOURCE = REPO_ROOT / 'templates' / 'add-point.html'
@@ -70,7 +70,7 @@ def encrypt_html(source: Path, destination: Path, *, force: bool) -> None:
         incoming.write_text(text, encoding='utf-8')
         outgoing.mkdir()
         environment = os.environ.copy()
-        environment['STATICRYPT_PASSWORD'] = TEAM_PASSWORD
+        environment['STATICRYPT_PASSWORD'] = team_password()
         subprocess.run(
             [
                 'node',
@@ -137,6 +137,15 @@ def encrypt_html(source: Path, destination: Path, *, force: bool) -> None:
     print(f'Encrypted {shown}')
 
 
+def published_pdfs() -> list[Path]:
+    files: list[Path] = []
+    for folder in ('GENERATED_IDW_MAPS', 'GENERATED_KNN_IDW_MAPS'):
+        root = REPO_ROOT / folder
+        if root.is_dir():
+            files.extend(sorted(root.glob('*.pdf')))
+    return files
+
+
 def encrypt_published() -> None:
     if not TEMPLATE.is_file():
         raise SystemExit(f'Missing {TEMPLATE}')
@@ -146,6 +155,9 @@ def encrypt_published() -> None:
     encrypt_html(ADD_POINT_SOURCE, REPO_ROOT / 'add-point.html', force=True)
     for path in published_html():
         encrypt_html(path, path, force=False)
+    for path in published_pdfs():
+        if encrypt_pdf(path):
+            print(f'Encrypted {path.relative_to(REPO_ROOT)}')
 
 
 if __name__ == '__main__':

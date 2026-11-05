@@ -418,6 +418,9 @@ def test_every_html_and_pdf_map_was_generated():
         if not png.is_file() or png.stat().st_size < 1000:
             missing.append(f'missing overlay {png.name}')
         for scope, pdf in pdf_files_for(html).items():
+            if not pdf.is_file() or not pdf.read_bytes().startswith(b'PCVSENC1'):
+                missing.append(f'unsealed {scope} PDF for {html.name}')
+                continue
             if not is_valid_pdf(pdf):
                 missing.append(f'missing/invalid {scope} PDF for {html.name}')
     assert not missing, 'Maps were not generated successfully:\n' + '\n'.join(missing)
@@ -443,6 +446,7 @@ def test_raster_pdfs_keep_data_points_as_vectors():
     for html in files:
         pdf = pdf_files_for(html)['raster']
         try:
+            assert pdf.read_bytes().startswith(b'PCVSENC1'), f'{pdf.name} is a plaintext PDF'
             assert_pdf_points_are_vector(pdf)
         except AssertionError as exc:
             broken.append(str(exc))
