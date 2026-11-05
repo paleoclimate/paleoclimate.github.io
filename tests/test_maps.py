@@ -10,12 +10,14 @@ from tests.helpers import (
     assert_pdf_points_are_vector,
     goto_viewer,
     idw_html_files,
+    INDEX_HTML,
     layer_labels,
     load_maps_catalog,
     map_frame,
     open_first_point_popup,
     overlay_checked,
     representative_ages,
+    read_html,
     repo_url,
     toggle_overlay,
     wait_leaflet_ready,
@@ -642,8 +644,44 @@ def test_pre_rendered_pdfs_are_served(page, base_url):
         response = page.request.get(repo_url(base_url, href))
         assert response.ok, f'{scope} PDF is not served: {href}'
         body = response.body()
-        assert body.startswith(b'%PDF-'), href
-        assert len(body) > 1000, href
+        assert body.startswith(b'PCVSENC1'), href
+        assert not body.startswith(b'%PDF-'), href
+        from site_crypto import decrypt_pdf_bytes
+        plain = decrypt_pdf_bytes(body)
+        assert plain.startswith(b'%PDF-'), href
+        assert len(plain) > 1000, href
+
+
+def test_viewer_shell_decrypts_sealed_pdfs():
+    plain = read_html(INDEX_HTML)
+    assert 'decryptSealedPdf' in plain
+    assert 'a.href = href' not in plain
+
+
+def test_viewer_opens_a_sealed_pdf(page, base_url):
+    maps = load_maps_catalog()
+    entry = maps[len(maps) // 2]
+    href = entry['pdf']['raster']
+    goto_viewer(page, base_url)
+    header = page.evaluate(
+        """async (href) => {
+          const response = await fetch(href);
+          const buffer = await response.arrayBuffer();
+          const bytes = new Uint8Array(buffer);
+          const magic = String.fromCharCode.apply(null, bytes.subarray(0, 8));
+          if (magic !== 'PCVSENC1') return 'unsealed';
+          const hexKey = sessionStorage.getItem('pcvs-staticrypt') || '';
+          const raw = new Uint8Array(hexKey.length / 2);
+          for (let i = 0; i < raw.length; i++) raw[i] = parseInt(hexKey.substr(i * 2, 2), 16);
+          const key = await crypto.subtle.importKey(
+            'raw', raw, {name: 'AES-GCM'}, false, ['decrypt']);
+          const plain = new Uint8Array(await crypto.subtle.decrypt(
+            {name: 'AES-GCM', iv: bytes.subarray(8, 20)}, key, bytes.subarray(20)));
+          return String.fromCharCode.apply(null, plain.subarray(0, 5));
+        }""",
+        href,
+    )
+    assert header == '%PDF-'
 
 
 @pytest.mark.slow

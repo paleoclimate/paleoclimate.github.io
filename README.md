@@ -13,8 +13,10 @@ points, reconstructed coastlines, optional basin outlines, and GeoTIFF raster da
 - **PDF Export**: One vector PDF of the raster extent. Coastlines, basin outlines,
   data points and graticule labels stay editable paths. The climate surface stays
   the embedded image.
-- **Access**: Published HTML is encrypted with StatiCrypt. A direct URL shows the
-  password page, not the map. The point files stay in local `GEOJSON/`.
+- **Access**: Published HTML is encrypted with StatiCrypt. Pre-rendered PDFs are
+  sealed with the same team password and are not PDFs until the unlocked viewer
+  decrypts them. A direct URL shows the password page, not the map. The point
+  files stay in local `GEOJSON/`.
 - **Add points**: `add-point.html` queues points in the browser and downloads
   one GeoJSON FeatureCollection in the October column pattern, without `Weight`.
   `Show_on_Ma` is copied from `TIME`. Nothing is written onto the published maps.
@@ -46,6 +48,8 @@ python render_map.py --power 4.0 --condensation-radius 0.5 --gradient-sharp 18.0
 This writes GeoTIFFs, one interactive HTML map per age, a condensation audit
 in `CONDENSED/`, and regenerates `index.html`. It then encrypts the published
 HTML with StatiCrypt (`npm install` once, so the `staticrypt` CLI is present).
+StatiCrypt reads `STATICRYPT_PASSWORD`, or the gitignored file
+`.staticrypt-password` in the repo root. The password is not in the repository.
 `--gradient-sharp` is accepted and ignored: the raster is class codes, not a
 sharpened ramp.
 
@@ -146,9 +150,11 @@ the PDF shows. Interactive controls (zoom, layer switcher, basin filter, measure
 are left out.
 
 Running with `--pdf` pre-renders that page next to each map HTML
-(`map_<age>_*_raster.pdf`). That file is what the viewer falls back to when it
-cannot render in the browser, for instance when `index.html` is opened straight
-from disk instead of being served over HTTP.
+(`map_<age>_*_raster.pdf`). The file in the repository is ciphertext, sealed
+with the same team password as the HTML. It is not a PDF until the unlocked
+viewer decrypts it. That download is the fallback when the viewer cannot
+render the PDF in the browser. Fetching the file without the session key
+does not yield the map.
 
 ## Comparison with Floegel reference maps
 

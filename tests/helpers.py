@@ -198,11 +198,26 @@ def pdf_files_for(html_path: Path) -> dict[str, Path]:
     return {'raster': pdf_path_for(html_path, 'raster')}
 
 
+def read_pdf(path: Path) -> bytes:
+    """PDF bytes. A sealed published file is decrypted; a live export is already a PDF."""
+    from site_crypto import PDF_MAGIC, decrypt_pdf_bytes
+
+    data = Path(path).read_bytes()
+    if data.startswith(PDF_MAGIC):
+        return decrypt_pdf_bytes(data)
+    if data.startswith(b'%PDF-'):
+        return data
+    raise ValueError(f'{path} is neither a sealed PDF nor a PDF')
+
+
 def is_valid_pdf(path: Path, min_bytes: int = 1000) -> bool:
     if not path.is_file() or path.stat().st_size < min_bytes:
         return False
-    with path.open('rb') as handle:
-        return handle.read(5) == b'%PDF-'
+    try:
+        plain = read_pdf(path)
+    except ValueError:
+        return False
+    return plain.startswith(b'%PDF-') and len(plain) >= min_bytes
 
 
 # Chromium used to stamp every drop-shadowed CircleMarker as an ~80px image.
@@ -224,7 +239,7 @@ def inspect_pdf_vectors(path: Path) -> dict:
     """
     import zlib
 
-    data = path.read_bytes()
+    data = read_pdf(path)
     images = [
         (int(width), int(height))
         for width, height in _PDF_IMAGE_SIZE.findall(data)

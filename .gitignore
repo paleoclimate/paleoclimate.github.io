@@ -2,3 +2,4 @@ backup/
 GEOJSON/
 __pycache__/
 node_modules/
+.staticrypt-password
