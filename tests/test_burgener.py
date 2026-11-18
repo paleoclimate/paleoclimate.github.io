@@ -115,7 +115,7 @@ def _l_continent_and_coastline(shift):
         corners = [(-45, -35), (-15, -35), (-15, -25), (-35, -25), (-35, -5), (-45, -5)]
         pts = []
         for lon, lat in corners:
-            col, row = inverse @ (lon + shift[0], lat + shift[1])
+            col, row = inverse * (lon + shift[0], lat + shift[1])
             pts.append((int(round(col)), int(round(row))))
         cv2.polylines(image, [np.array(pts, np.int32)], True, (0, 0, 0), 1)
         return image

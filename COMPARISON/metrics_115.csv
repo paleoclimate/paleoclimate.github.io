@@ -3,17 +3,17 @@ Raster,115_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.tif
 
 "Matriz de confusao (linhas=GeoTIFF, colunas=Floegel)"
 ,Seco,Semi-arido,Umido
-Seco,28931,0,0
-Semi-arido,145508,7197,0
-Umido,166466,1826,0
+Seco,25192,0,0
+Semi-arido,176927,7691,0
+Umido,138055,1266,0
 
 Similaridade por classe
 Classe,IoU (%),Recall (%),Precisao (%),Area GeoTIFF (%),Area Floegel (%)
-Seco,8.49,100.00,8.49,8.27,97.42
-Semi-arido,4.66,4.71,79.76,43.64,2.58
-Umido,0.00,0.00,0.00,48.09,0.00
+Seco,7.41,100.00,7.41,7.22,97.43
+Semi-arido,4.14,4.17,85.87,52.88,2.57
+Umido,0.00,0.00,0.00,39.91,0.00
 
 Similaridade geral
-Acuracia global (%),10.32
-Kappa de Cohen,0.0126
-Pixels comparados,349928
+Acuracia global (%),9.42
+Kappa de Cohen,0.0113
+Pixels comparados,349131

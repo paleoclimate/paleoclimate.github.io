@@ -12,8 +12,8 @@ Antes de comparar, confira se você tem:
 
 | Arquivo | Descrição |
 |---------|-----------|
-| `GENERATED_GEOTIFFS/105_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.tif` | GeoTIFF gerado para 105 Ma |
-| `GENERATED_GEOTIFFS/115_ma_knn_idw_power4.0_gradient_sharp18.0_kdtree.tif` | GeoTIFF gerado para 115 Ma |
+| `GENERATED_GEOTIFFS/105_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.tif` | GeoTIFF gerado para 105 Ma |
+| `GENERATED_GEOTIFFS/115_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.tif` | GeoTIFF gerado para 115 Ma |
 | `COMPARISON/inputs/105_floegel.png` | Recorte PNG do mapa Floegel (105 Ma); só local, fora do git (ADR 0049) |
 | `COMPARISON/inputs/115_floegel.png` | Recorte PNG do mapa Floegel (115 Ma); só local |
 | `COMPARISON/inputs/legenda.png` | Recorte da legenda de cores do Floegel; só local (sem ele, valem as cores amostradas no código) |

@@ -1,0 +1,19 @@
+Comparacao Burgener x GeoTIFF - 85 Ma
+Raster,85_ma_knn_idw_power4.0_smooth2.0_class-thirds_kdtree.tif
+
+"Matriz de confusao (linhas=GeoTIFF, colunas=Burgener)"
+,Seco,Semi-arido,Umido
+Seco,4448,1021,8973
+Semi-arido,32747,8070,120381
+Umido,19423,7705,93452
+
+Similaridade por classe
+Classe,IoU (%),Recall (%),Precisao (%),Area GeoTIFF (%),Area Burgener (%)
+Seco,6.68,30.80,7.86,4.88,19.11
+Semi-arido,4.75,5.01,48.05,54.42,5.67
+Umido,37.39,77.50,41.94,40.71,75.22
+
+Similaridade geral
+Acuracia global (%),35.77
+Kappa de Cohen,0.0174
+Pixels comparados,296220

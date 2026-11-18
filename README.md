@@ -34,8 +34,10 @@ pip install -r requirements.txt
 The citation data is not versioned. `GEOJSON/` (source points), `conceptual/`
 (conceptual lattices) and `CONDENSED/` (condensation audits) are gitignored and
 live only on the team's machines; get them from the team and copy them into the
-repository root before generating maps. Checks that read `conceptual/` or
-`CONDENSED/` are skipped when those folders are absent.
+repository root before generating maps
+(`docs/adr/0051-conceptual-lattices-and-condensation-audits-stay-local.md`).
+Checks that read `conceptual/` or `CONDENSED/` are skipped when those folders
+are absent.
 
 The team password is not stored in the repository. StatiCrypt reads
 `STATICRYPT_PASSWORD`, or the gitignored file `.staticrypt-password` in the
