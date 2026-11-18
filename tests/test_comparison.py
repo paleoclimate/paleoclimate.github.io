@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+
+import pytest
 
 from tests.helpers import COMPARISON_AGES, COMPARISON_DIR, repo_url
 
@@ -81,6 +84,13 @@ def test_gcp_files_have_enough_control_points():
         points = payload.get('points') or payload.get('pairs') or []
         assert len(points) >= 4, f'gcp_{age}.json needs at least 4 pairs'
         assert int(payload.get('age', age)) == int(age)
+
+
+@pytest.fixture(autouse=True)
+def _picker_is_local(request):
+    """The GCP picker embeds the Elsevier scans, so it exists only on a local run."""
+    if 'gcp_picker' in request.node.name and not (COMPARISON_DIR / 'gcp_picker.html').is_file():
+        pytest.skip('gcp_picker.html is local only (ADR 0049); run compare_floegel.py pick-gcps')
 
 
 def test_gcp_picker_loads_both_canvases(page, base_url):
@@ -192,11 +202,32 @@ def test_gcp_picker_age_switch_keeps_state_per_age(page, base_url):
     assert 'Pares: 1' in page.locator('#status').inner_text()
 
 
-def test_hay_images_are_absent_and_floegel_images_are_present():
+def test_hay_images_are_absent_and_floegel_images_are_local():
     import compare_floegel as comparison
 
     assert comparison.atlas_images_present('hay') == []
-    assert set(comparison.atlas_images_present('floegel')) == {'105', '115'}
+    assert set(comparison.atlas_images_present('floegel')) <= {'105', '115'}
+
+
+def test_elsevier_figures_are_not_in_the_repository():
+    """Hay & Floegel (2012) is (c) Elsevier: no scan, crop or picker may be tracked."""
+    tracked = subprocess.run(['git', 'ls-files', 'COMPARISON'], cwd=COMPARISON_DIR.parent,
+                             capture_output=True, text=True, check=True).stdout.split()
+    forbidden = [p for p in tracked
+                 if re.search(r'(_floegel|_hay|_chumakov)\.png$|legenda\.png$|gcp_picker\.html$', p)]
+    assert forbidden == []
+    ignored = subprocess.run(
+        ['git', 'check-ignore', 'COMPARISON/inputs/105_floegel.png', 'COMPARISON/inputs/70_chumakov.png',
+         'COMPARISON/inputs/legenda.png', 'COMPARISON/warped_floegel_105.png', 'COMPARISON/gcp_picker.html'],
+        cwd=COMPARISON_DIR.parent, capture_output=True, text=True).stdout.split()
+    assert len(ignored) == 5
+
+
+def test_floegel_report_does_not_embed_the_published_figure():
+    import compare_floegel as comparison
+
+    assert 'floegel' not in comparison.ATLAS_IMAGE_SHAREABLE
+    assert 'burgener' in comparison.ATLAS_IMAGE_SHAREABLE
 
 
 def test_comparison_uses_the_raster_shown_on_the_map():

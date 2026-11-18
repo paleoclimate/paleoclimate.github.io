@@ -7,6 +7,7 @@ import re
 import pytest
 
 from tests.helpers import (
+    CHUMAKOV_AGES,
     COMPARISON_AGES,
     COMPARISON_DIR,
     INDEX_HTML,
@@ -142,6 +143,10 @@ def test_comparison_links_only_for_supported_ages():
         if age in COMPARISON_AGES:
             assert entry['comparison'] == f'COMPARISON/comparison_report_{age}.html'
             assert report.is_file(), f'Missing comparison report for {age} Ma'
+        elif age in CHUMAKOV_AGES:
+            # Shoreline-fit ages: linked exactly when the report was generated.
+            expected = f'COMPARISON/comparison_report_{age}.html' if report.is_file() else ''
+            assert (entry['comparison'] or '') == expected
         else:
             assert entry['comparison'] in ('', None)
             if report.is_file():

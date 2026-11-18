@@ -10,6 +10,7 @@ are replaced with a password shell. The editable add-points form stays in
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,8 +31,11 @@ GATE_TAGS = (
 def _ensure_staticrypt() -> None:
     if STATICRYPT_CLI.is_file():
         return
+    # On Windows npm is a batch file (npm.cmd), which subprocess does not find
+    # without the extension.
+    npm = shutil.which('npm') or ('npm.cmd' if os.name == 'nt' else 'npm')
     subprocess.run(
-        ['npm', 'install', '--no-fund', '--no-audit'],
+        [npm, 'install', '--no-fund', '--no-audit'],
         cwd=REPO_ROOT,
         check=True,
     )
@@ -46,7 +50,11 @@ def published_html() -> list[Path]:
     if maps.is_dir():
         files.extend(sorted(maps.glob('map_*.html')))
     if comparison.is_dir():
-        files.extend(sorted(comparison.glob('*.html')))
+        # gcp_picker.html embeds Elsevier scans and stays a local tool (ADR 0049).
+        files.extend(
+            path for path in sorted(comparison.glob('*.html'))
+            if path.name != 'gcp_picker.html'
+        )
     return [path for path in files if path.is_file()]
 
 

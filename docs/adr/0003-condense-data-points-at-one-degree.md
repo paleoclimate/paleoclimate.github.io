@@ -1,5 +1,7 @@
 # Condense data points at 1° before interpolation
 
+Status: partially superseded by ADRs 0007 and 0044 (radius 0.5°; Weight used as weight).
+
 The published radius is no longer 1.0°. See `0007-condensation-radius-is-half-a-degree.md`.
 
 Piles of citations at one locality were voting against each other inside the IDW and washing the semi-arid class out. The candidate surface condenses those citations first.

@@ -19,6 +19,9 @@ COMPARISON_DIR = REPO_ROOT / 'COMPARISON'
 
 LAYER_NAMES = ('Raster', 'Coastlines', 'Data points', 'Color stats')
 COMPARISON_AGES = {105, 115}
+# Hay & Floegel (2012) ages scored by shoreline fit (compare_chumakov.py); their
+# reports exist only after a local run, so the viewer links them when present.
+CHUMAKOV_AGES = {70, 85, 95, 140}
 STORAGE_KEY = 'pcvs:age'
 
 
