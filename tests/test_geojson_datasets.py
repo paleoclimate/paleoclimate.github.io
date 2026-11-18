@@ -389,6 +389,8 @@ def test_conceptual_file_reads_paleozona_when_climate_cl_is_missing(tmp_path):
 
 def test_every_conceptual_file_loads_as_classed_anchors():
     root = Path(__file__).resolve().parents[1] / 'conceptual'
+    if not root.is_dir():
+        pytest.skip('conceptual/ is private, local and gitignored')
     files = sorted(root.glob('*_ma_conceptual.geojson'), key=lambda path: int(path.name.split('_')[0]))
     ages = [int(path.name.split('_')[0]) for path in files]
     assert ages == list(range(65, 150, 5))

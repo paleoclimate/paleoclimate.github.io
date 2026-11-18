@@ -4,6 +4,10 @@ __pycache__/
 node_modules/
 .staticrypt-password
 
+# Private citation data: kept only on the team's machines (not versioned)
+CONDENSED/
+conceptual/
+
 # Rasters de confiança revelam a posição dos dados; ficam só locais
 GENERATED_CONFIDENCE/
 

@@ -29,6 +29,21 @@ points, reconstructed coastlines, optional basin outlines, and GeoTIFF raster da
 pip install -r requirements.txt
 ```
 
+## Private data and the site password
+
+The citation data is not versioned. `GEOJSON/` (source points), `conceptual/`
+(conceptual lattices) and `CONDENSED/` (condensation audits) are gitignored and
+live only on the team's machines; get them from the team and copy them into the
+repository root before generating maps. Checks that read `conceptual/` or
+`CONDENSED/` are skipped when those folders are absent.
+
+The team password is not stored in the repository. StatiCrypt reads
+`STATICRYPT_PASSWORD`, or the gitignored file `.staticrypt-password` in the
+repo root. `render_map.py` and `encrypt_site.py` stop with a clear error when
+it is missing. After changing the password, regenerate the published pages
+from plaintext so they are encrypted with the new value; `encrypt_site.py`
+skips pages that are already ciphertext.
+
 ## Usage
 
 Run the script to generate the interactive maps. The published candidate
@@ -50,8 +65,6 @@ python render_map.py --power 4.0 --condensation-radius 0.5 --gradient-sharp 18.0
 This writes GeoTIFFs, one interactive HTML map per age, a condensation audit
 in `CONDENSED/`, and regenerates `index.html`. It then encrypts the published
 HTML with StatiCrypt (`npm install` once, so the `staticrypt` CLI is present).
-StatiCrypt reads `STATICRYPT_PASSWORD`, or the gitignored file
-`.staticrypt-password` in the repo root. The password is not in the repository.
 `--gradient-sharp` is accepted and ignored: the raster is class codes, not a
 sharpened ramp.
 
@@ -117,8 +130,8 @@ runs live PDF export. Extra pytest flags go after `--`, for example
 - `GEOJSON/`: Point files (`{age}_ma.geojson`), coastlines (`{age}_ma_coastline.geojson`),
   optional paleozones (`{age}_ma_paleozones.geojson`), and optional basin
   outlines (`{age}_ma_basins.geojson`)
-- `conceptual/`: Conceptual lattices, one file per age
-  (`{age}_ma_conceptual.geojson`, 65 Ma through 145 Ma)
+- `conceptual/`: Local conceptual lattices, one file per age
+  (`{age}_ma_conceptual.geojson`, 65 Ma through 145 Ma). Not versioned.
 - `GEOTIFF/`: Contains GeoTIFF raster files
 - `RASTER/`: Contains ArcGIS raster data (not directly used in current implementation)
 
